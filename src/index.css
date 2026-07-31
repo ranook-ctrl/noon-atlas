@@ -1,0 +1,307 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ */
+/* Geist Pixel — variable font (axis ELSH "Element Shape", 0–100)      */
+/*   Regular  = ELSH 0   |   Line = ELSH 80                            */
+/* ------------------------------------------------------------------ */
+@font-face {
+  font-family: "Geist Pixel";
+  src: url("/fonts/GeistPixel-Regular-VariableFont_ELSH.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --atlas-bg: #0b0b0d;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--atlas-bg);
+  font-family: "Geist Pixel", system-ui, -apple-system, sans-serif;
+}
+
+/* Named-instance helpers for the ELSH axis */
+.pixel {
+  font-family: "Geist Pixel", sans-serif;
+  font-weight: 400;
+  font-variation-settings: "ELSH" 0;
+}
+.pixel-line {
+  font-family: "Geist Pixel", sans-serif;
+  font-weight: 400;
+  font-variation-settings: "ELSH" 80;
+}
+.pixel-square {
+  font-family: "Geist Pixel", sans-serif;
+  font-weight: 400;
+  font-variation-settings: "ELSH" 1;
+}
+.pixel-grid {
+  font-family: "Geist Pixel", sans-serif;
+  font-weight: 400;
+  font-variation-settings: "ELSH" 40;
+}
+
+/* ── Dashboard landing page (Figma 54:65001) ───────────────────────────── */
+/* Two stacked layers: the infinite plane (z 0) and the fixed chrome (z 100). */
+.dashboard {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+/* The infinite x-y plane sits on the base of the stack. */
+.dashboard .atlas-canvas {
+  z-index: 0;
+}
+
+/* The app chrome floats above the plane. pointer-events:none lets a drag in the
+   empty gaps fall through to the canvas so it still pans; each widget opts back
+   in for itself.
+
+   Responsive scaler: the chrome is laid out in a "design space" sized
+   viewport ÷ --ui-scale, then scaled by --ui-scale back to exactly fill the
+   viewport. This scales every widget, its text and its edge insets uniformly
+   while keeping them pinned to the true viewport edges on any device. */
+.dashboard__chrome {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: calc(100vw / var(--ui-scale, 1));
+  height: calc(100vh / var(--ui-scale, 1));
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: top left;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.dashboard__widget {
+  pointer-events: auto;
+}
+
+/* Top bar — full width, padding 8×20, space-between (menu · stats). */
+.dashboard__topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  pointer-events: none;
+}
+
+/* Map/Screens switch — pinned to the viewport centre (top 8, matching the top
+   bar padding) so it never shifts when the surrounding widgets change. */
+.dashboard__switch {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Right inspector panel — sticks to the right, 20px from the edge, and fills the
+   height left between the top bar and the bottom (viewport-based). Top offset
+   leaves a 20px gap below the top bar (its nav bar ends at 42px → 42 + 20).
+   Slides in/out on the `is-open` class (500ms, ease-in-out): page load slides it
+   in, the close icon slides it out, focusing an artboard slides it back in.
+   Only the transform animates (no opacity fade), so the glass blur is already
+   present as it slides — it doesn't fade in after settling. */
+.dashboard__right-nav {
+  position: absolute;
+  top: 62px;
+  right: 20px;
+  bottom: 20px;
+  transform: translateX(calc(100% + 20px));
+  transition: transform 500ms ease-in-out;
+}
+
+.dashboard__right-nav.is-open {
+  transform: translateX(0);
+}
+
+/* Breadcrumb trail, bottom-left (frame x:20). */
+.dashboard__breadcrumbs {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+}
+
+/* Expanded Sidenav — pinned top-left with a 20px inset (Figma 59:85626). It
+   fills the height down to a 20px gap above the Breadcrumbs bar (32px tall at a
+   20px bottom inset → 20 + 32 + 20 = 72px), so the two never overlap. It morphs
+   out of the "noon Homepage" pill, so it grows from the top-left corner. */
+.dashboard__sidenav {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  bottom: 72px;
+  transform-origin: top left;
+  animation: sidenav-morph 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes sidenav-morph {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Homepage section hover blocks — transparent until hovered, then a faint
+   noon-pink tint + hairline so the active section reads clearly. */
+.master-image__section {
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+.master-image__section:hover {
+  background-color: rgba(247, 48, 111, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(247, 48, 111, 0.5);
+}
+
+/* Per-section stats card — floats just left of the Right Nav panel. It only
+   displays, so it stays pointer-transparent and never steals the hover. */
+.dashboard__section-stats {
+  position: absolute;
+  right: 375px;
+  pointer-events: none;
+  animation: stats-in 140ms ease;
+  transition: top 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Pink connector (Figma 61:96582) — a 1px #F7306F leader line with endpoint
+   dots, drawn from the stats card's right tick to the hovered section. */
+.dashboard__connector {
+  position: absolute;
+  height: 1px;
+  background: #f7306f;
+  pointer-events: none;
+  animation: stats-in 140ms ease;
+  transition: top 300ms cubic-bezier(0.22, 1, 0.36, 1), width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.dashboard__connector::before,
+.dashboard__connector::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f7306f;
+  transform: translateY(-50%);
+}
+.dashboard__connector::before {
+  left: -1px;
+}
+.dashboard__connector::after {
+  right: -1px;
+}
+
+@keyframes stats-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ── Infinite atlas canvas ─────────────────────────────────────────────── */
+.atlas-canvas {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.atlas-canvas[data-panning="true"] {
+  cursor: grabbing;
+}
+
+.atlas-canvas__grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.atlas-canvas__world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* A section mounted onto the canvas, positioned in world space. */
+.atlas-section {
+  position: absolute;
+}
+
+/* ── Zoom controls ─────────────────────────────────────────────────────── */
+.atlas-hud {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(20, 20, 24, 0.7);
+  backdrop-filter: blur(8px);
+  color: #e7e9ee;
+  font-size: 13px;
+  user-select: none;
+}
+
+.atlas-hud__btn,
+.atlas-hud__value {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #e7e9ee;
+  cursor: pointer;
+  border-radius: 7px;
+  transition: background 120ms ease;
+}
+
+.atlas-hud__btn {
+  width: 28px;
+  height: 28px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.atlas-hud__value {
+  min-width: 52px;
+  height: 28px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.atlas-hud__btn:hover,
+.atlas-hud__value:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
