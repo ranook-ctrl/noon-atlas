@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { CanvasSection } from './CanvasSection'
 import { useCanvas } from './CanvasContext'
 import { cubicBezier } from './useViewport'
+import { useUiScale } from './useUiScale'
 import { Artboard } from '../components'
+import { FlowStats } from '../molecules/FlowStats'
+import { flowStats } from '../molecules/screenStats'
 
 /**
  * The noon Atlas — every screen and flow laid out on the infinite plane, 1:1
@@ -173,11 +176,15 @@ function connectorPath(s: Box, t: Box) {
     b = { x: right ? t.x : t.x + t.w, y: tc.y }
     bn = { x: right ? -1 : 1, y: 0 }
   } else {
-    // Vertical: use top/bottom edges.
+    // Vertical: use top/bottom edges. The artboard's name label sits
+    // LABEL_H+GAP above the frame, so a connector meeting the TOP of a board
+    // anchors at the label top (not the frame top) — combined with the
+    // GAP_FROM_BOARD push below it starts/ends 20px above the name text.
     const down = dy >= 0
-    a = { x: sc.x, y: down ? s.y + s.h : s.y }
+    const LABEL_TOP_OFFSET = LABEL_H + GAP
+    a = { x: sc.x, y: down ? s.y + s.h : s.y - LABEL_TOP_OFFSET }
     an = { x: 0, y: down ? 1 : -1 }
-    b = { x: tc.x, y: down ? t.y : t.y + t.h }
+    b = { x: tc.x, y: down ? t.y - LABEL_TOP_OFFSET : t.y + t.h }
     bn = { x: 0, y: down ? -1 : 1 }
   }
 
@@ -216,9 +223,18 @@ type AtlasBoardsProps = {
 
 export function AtlasBoards({ focusedId, onFocus, resetNonce = 0 }: AtlasBoardsProps) {
   const { scale, viewport, linksLayer, focusRect } = useCanvas()
+  // Responsive UI scale — connector stroke widths scale with the device the
+  // same way the chrome does (see useUiScale).
+  const uiScale = useUiScale()
   const [pos, setPos] = useState<Record<string, Vec>>(initialPos)
   const posRef = useRef(pos)
   posRef.current = pos
+
+  // The connector currently under the cursor, plus the live cursor position (in
+  // viewport px) — drives the Flow Stats tooltip that follows the pointer.
+  const [hovered, setHovered] = useState<{ from: string; to: string; x: number; y: number } | null>(
+    null,
+  )
 
   const move = (id: string, next: Vec) => setPos((p) => ({ ...p, [id]: next }))
 
@@ -274,13 +290,23 @@ export function AtlasBoards({ focusedId, onFocus, resetNonce = 0 }: AtlasBoardsP
                 <Connector
                   key={`${from}->${to}`}
                   geom={connectorPath(frameBox(pos[from]), frameBox(pos[to]))}
+                  uiScale={uiScale}
                   onClick={() => onFocus(to)}
+                  onHover={(x, y) => setHovered({ from, to, x, y })}
+                  onLeave={() => setHovered((h) => (h?.from === from && h?.to === to ? null : h))}
                 />
               ))}
             </g>
           </svg>,
           linksLayer,
         )}
+
+      {/* Flow Stats tooltip — pinned near the cursor while a connector is hovered,
+          portalled to <body> so it floats above every chrome layer (side nav, top
+          bar, breadcrumbs). */}
+      {hovered && (
+        <ConnectorTooltip from={hovered.from} to={hovered.to} x={hovered.x} y={hovered.y} />
+      )}
 
       {/* Screen artboards. */}
       {SCREENS.map((b) => (
@@ -302,26 +328,40 @@ export function AtlasBoards({ focusedId, onFocus, resetNonce = 0 }: AtlasBoardsP
 
 type ConnectorProps = {
   geom: ReturnType<typeof connectorPath>
+  /** responsive UI scale applied to the stroke width. */
+  uiScale: number
   /** navigate to the screen this connector points at. */
   onClick: () => void
+  /** report the cursor position (viewport px) while this connector is hovered. */
+  onHover: (x: number, y: number) => void
+  /** the cursor left this connector. */
+  onLeave: () => void
 }
 
 /**
  * A single flow connector. Idle it's a faint white leader; on hover it lights up
  * noon-pink (#F7306F) at full opacity with a 3× stroke and turns into a clickable
  * link that flies the camera to the screen it connects to. A transparent wide
- * hit-path underneath makes the thin line easy to hover and click.
+ * hit-path underneath makes the thin line easy to hover and click. While hovered
+ * it also reports the cursor position so a Flow Stats tooltip can track it.
  */
-function Connector({ geom, onClick }: ConnectorProps) {
+function Connector({ geom, uiScale, onClick, onHover, onLeave }: ConnectorProps) {
   const { d, tail, tip, deg } = geom
   const [hover, setHover] = useState(false)
   const color = hover ? CONNECTOR_HOVER_COLOR : CONNECTOR_COLOR
-  const width = hover ? CONNECTOR_WIDTH * 2 : CONNECTOR_WIDTH
+  const width = (hover ? CONNECTOR_WIDTH * 2 : CONNECTOR_WIDTH) * uiScale
 
   return (
     <g
-      onPointerEnter={() => setHover(true)}
-      onPointerLeave={() => setHover(false)}
+      onPointerEnter={(e) => {
+        setHover(true)
+        onHover(e.clientX, e.clientY)
+      }}
+      onPointerMove={(e) => onHover(e.clientX, e.clientY)}
+      onPointerLeave={() => {
+        setHover(false)
+        onLeave()
+      }}
       onClick={onClick}
       style={{ pointerEvents: 'auto', cursor: 'pointer', opacity: hover ? 1 : undefined }}
     >
@@ -337,6 +377,117 @@ function Connector({ geom, onClick }: ConnectorProps) {
         fill={color}
       />
     </g>
+  )
+}
+
+const TOOLTIP_GAP = 10 // px gap kept between the cursor and the nearest card edge
+const TOOLTIP_MARGIN = 8 // keep the card at least this far inside the safe area
+
+/**
+ * The chrome-free "safe area": the viewport minus the fixed chrome widgets (top
+ * bar, side nav, right inspector, breadcrumbs) so the tooltip never overlaps
+ * them. Each visible `.dashboard__widget` reserves space on whichever viewport
+ * edge it hugs; hidden / slid-out widgets fall outside and reserve nothing.
+ */
+function safeAreaRect() {
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const m = TOOLTIP_MARGIN
+  const safe = { left: m, top: m, right: vw - m, bottom: vh - m }
+
+  const chrome = document.querySelector('.dashboard__chrome')
+  if (!chrome) return safe
+
+  chrome.querySelectorAll<HTMLElement>('.dashboard__widget').forEach((el) => {
+    const r = el.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) return
+    // Ignore anything already outside the viewport (e.g. a slid-out right nav).
+    if (r.right <= 0 || r.left >= vw || r.bottom <= 0 || r.top >= vh) return
+    // A tall widget is a vertical strip (side nav / right inspector) → reserve a
+    // left/right inset; a wide widget is a horizontal strip (top bar / crumbs) →
+    // reserve a top/bottom inset. Then pick the side it actually hugs.
+    if (r.height >= r.width) {
+      if (r.left <= vw - r.right) safe.left = Math.max(safe.left, r.right + m)
+      else safe.right = Math.min(safe.right, r.left - m)
+    } else {
+      if (r.top <= vh - r.bottom) safe.top = Math.max(safe.top, r.bottom + m)
+      else safe.bottom = Math.min(safe.bottom, r.top - m)
+    }
+  })
+
+  return safe
+}
+
+type ConnectorTooltipProps = {
+  from: string
+  to: string
+  /** cursor position in viewport px. */
+  x: number
+  y: number
+}
+
+/**
+ * The Flow Stats card, pinned to the cursor with a {@link TOOLTIP_GAP}px gap
+ * while a connector is hovered. Prefers the cursor's lower-right, flipping to the
+ * opposite side when it would overflow, and clamped to stay on-screen. Rendered
+ * into <body> at a very high z-index so no chrome layer (side nav, top bar,
+ * breadcrumbs) can cover it.
+ */
+function ConnectorTooltip({ from, to, x, y }: ConnectorTooltipProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  // The card is authored 1:1; scale it with the same responsive algorithm as
+  // the rest of the chrome so it matches on any device.
+  const uiScale = useUiScale()
+  const [size, setSize] = useState({ w: 0, h: 0 })
+  useLayoutEffect(() => {
+    if (ref.current) {
+      // getBoundingClientRect already reflects the applied transform scale, so
+      // the flip/clamp maths below work in real on-screen pixels.
+      const r = ref.current.getBoundingClientRect()
+      setSize({ w: r.width, h: r.height })
+    }
+  }, [from, to, uiScale])
+
+  // Confine the card to the chrome-free safe area (no overlapping side bars,
+  // top nav or breadcrumbs).
+  const safe = safeAreaRect()
+  // Prefer below-right of the cursor; flip to the other side if it won't fit.
+  let left = x + TOOLTIP_GAP
+  let top = y + TOOLTIP_GAP
+  if (left + size.w > safe.right) left = x - TOOLTIP_GAP - size.w
+  if (top + size.h > safe.bottom) top = y - TOOLTIP_GAP - size.h
+  // Final clamp so it stays entirely within the safe area.
+  left = Math.max(safe.left, Math.min(left, safe.right - size.w))
+  top = Math.max(safe.top, Math.min(top, safe.bottom - size.h))
+
+  const fromLabel = SCREEN_BY_ID.get(from)?.label ?? from
+  const toLabel = SCREEN_BY_ID.get(to)?.label ?? to
+  // Fixed component-library parameter labels; right-hand values randomised per
+  // flow. The reels roll to fresh values as the hovered connector changes.
+  const stats = flowStats(`${from}->${to}`)
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{
+        position: 'fixed',
+        left,
+        top,
+        zIndex: 9999,
+        pointerEvents: 'none',
+        transform: `scale(${uiScale})`,
+        transformOrigin: 'top left',
+      }}
+    >
+      <FlowStats
+        eyebrow={`${fromLabel} to`}
+        title={toLabel}
+        primary={stats.primary}
+        secondary={stats.secondary}
+        animate
+      />
+    </div>,
+    document.body,
   )
 }
 

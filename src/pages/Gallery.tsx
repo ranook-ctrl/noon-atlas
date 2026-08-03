@@ -4,10 +4,11 @@ import {
   MinimisedFloatingMenu,
   Pill,
   Row,
+  FlowRow,
   DeviceSize,
   TopPills,
 } from '../components'
-import { TopNav, BreadcrumbsTab, StatsBar, MasterImage, RightNav, Sidebar } from '../molecules'
+import { TopNav, BreadcrumbsTab, StatsBar, FlowStats, MasterImage, RightNav, Sidebar } from '../molecules'
 import { InfiniteCanvas, CanvasSection } from '../canvas'
 
 function Section({ title, node, children }: { title: string; node: string; children: ReactNode }) {
@@ -75,6 +76,13 @@ export default function Gallery() {
           </div>
         </Section>
 
+        <Section title="Flow Row" node="129:104177">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <FlowRow label="Monetisation_per_day" value="380.000" />
+            <FlowRow label="Entry-point CTR" value="11.2%" markerColor="#26B57C" />
+          </div>
+        </Section>
+
         <Section title="Device Size" node="25:25261">
           <DeviceSize device="iphone 13 Pro" dimensions="375 x 812" />
         </Section>
@@ -110,6 +118,10 @@ export default function Gallery() {
 
             <Section title="Stat's bar" node="25:22918">
               <StatsBar />
+            </Section>
+
+            <Section title="Flow Stats" node="129:104237">
+              <FlowStats />
             </Section>
 
             <Section title="Master Image" node="25:27389">

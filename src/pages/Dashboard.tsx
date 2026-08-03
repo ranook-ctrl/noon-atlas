@@ -8,6 +8,7 @@ import {
   ATLAS_LINKS,
   flowPathTo,
   INTRO_HOLD_MS,
+  uiScaleFor,
 } from '../canvas'
 import {
   TopNav,
@@ -47,10 +48,6 @@ import { MinimisedFloatingMenu } from '../components'
  * fills the viewport at true scale (it has its own zoom).
  */
 
-// Reference viewport the chrome is designed against; the UI scales to fit any
-// device by the smaller of the width/height ratios, clamped to a sane range.
-const REF_W = 1600
-const REF_H = 1000
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
 
 /** Tracks the live viewport size (updates on resize). */
@@ -66,7 +63,8 @@ function useViewportSize() {
 
 export default function Dashboard() {
   const { w: vw, h: vh } = useViewportSize()
-  const uiScale = clamp(Math.min(vw / REF_W, vh / REF_H), 0.6, 1.4)
+  // Shared responsive scaling algorithm (authored against a 1600×1000 reference).
+  const uiScale = uiScaleFor(vw, vh)
   const [navOpen, setNavOpen] = useState(false)
   const [section, setSection] = useState<{ index: number; top: number; left: number } | null>(null)
   // The artboard currently in focus on the canvas — drives the Right Nav preview
