@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { CanvasSection } from './CanvasSection'
 import { useCanvas } from './CanvasContext'
+import { cubicBezier } from './useViewport'
 import { Artboard } from '../components'
 
 /**
@@ -15,8 +17,10 @@ import { Artboard } from '../components'
  *  · tap   → that board becomes the focused variant and the camera pans/zooms
  *            so it sits centred at 60% of the viewport height.
  *
- * Connectors are drawn as SVG inside the world layer, so they pan, zoom and
- * stretch with everything else. Each arrow leaves and arrives perpendicular to
+ * Connectors are drawn as SVG in a screen-space overlay (outside the composited
+ * world layer, so they stay crisp at any zoom); the camera transform is
+ * re-applied in SVG space so they pan, zoom and stretch with everything else.
+ * Each arrow leaves and arrives perpendicular to
  * the middle of a board edge (left/right/top/bottom), curving between, with a
  * circle on the source end and an arrowhead on the destination end.
  */
@@ -76,6 +80,16 @@ const LINKS: { from: string; to: string }[] = [
 ]
 
 const CONNECTOR_COLOR = 'rgba(255, 255, 255, 0.35)'
+const CONNECTOR_HOVER_COLOR = '#F7306F'
+const CONNECTOR_WIDTH = 1.75
+
+// Opening sequence: the atlas loads framing the whole map (overview), then
+// immediately flies into the entry screen (no hold).
+export const INTRO_HOLD_MS = 0
+export const INTRO_ZOOM_MS = 1000
+// Ease-in-out biased toward a longer, gentler ease-out (Material-style standard
+// curve) — accelerates in, then decelerates over a longer tail.
+const INTRO_EASE = cubicBezier(0.4, 0, 0.15, 1)
 
 export type AtlasScreen = { id: string; label: string; src: string }
 
@@ -167,6 +181,12 @@ function connectorPath(s: Box, t: Box) {
     bn = { x: 0, y: down ? -1 : 1 }
   }
 
+  // Push both ends out along their normals so the connector begins/ends with a
+  // 20px gap from the artboard rather than touching the frame edge.
+  const GAP_FROM_BOARD = 20
+  a = { x: a.x + an.x * GAP_FROM_BOARD, y: a.y + an.y * GAP_FROM_BOARD }
+  b = { x: b.x + bn.x * GAP_FROM_BOARD, y: b.y + bn.y * GAP_FROM_BOARD }
+
   const dist = Math.hypot(b.x - a.x, b.y - a.y)
   const h = Math.max(48, dist * 0.4) // handle length → how much it bends
   const c1 = { x: a.x + an.x * h, y: a.y + an.y * h }
@@ -195,7 +215,7 @@ type AtlasBoardsProps = {
 }
 
 export function AtlasBoards({ focusedId, onFocus, resetNonce = 0 }: AtlasBoardsProps) {
-  const { scale, focusRect } = useCanvas()
+  const { scale, viewport, linksLayer, focusRect } = useCanvas()
   const [pos, setPos] = useState<Record<string, Vec>>(initialPos)
   const posRef = useRef(pos)
   posRef.current = pos
@@ -203,15 +223,22 @@ export function AtlasBoards({ focusedId, onFocus, resetNonce = 0 }: AtlasBoardsP
   const move = (id: string, next: Vec) => setPos((p) => ({ ...p, [id]: next }))
 
   // Whenever the focused screen changes — from a board tap OR a breadcrumb
-  // click — fly the camera to it. Skip the first run: the initial viewport
-  // already frames the entry screen.
+  // click — fly the camera to it. On the very first run the canvas is framing
+  // the whole-atlas overview, so instead of snapping we hold that shot for a
+  // beat and then smoothly zoom into the entry screen.
   const focusRectRef = useRef(focusRect)
   focusRectRef.current = focusRect
   const mounted = useRef(false)
   useEffect(() => {
     if (!mounted.current) {
       mounted.current = true
-      return
+      const t = setTimeout(() => {
+        focusRectRef.current(frameBox(posRef.current[focusedId]), {
+          duration: INTRO_ZOOM_MS,
+          easing: INTRO_EASE,
+        })
+      }, INTRO_HOLD_MS)
+      return () => clearTimeout(t)
     }
     focusRectRef.current(frameBox(posRef.current[focusedId]))
   }, [focusedId])
@@ -231,30 +258,29 @@ export function AtlasBoards({ focusedId, onFocus, resetNonce = 0 }: AtlasBoardsP
 
   return (
     <>
-      {/* Connector layer — behind the cards, drawn in world space. */}
-      <svg
-        className="atlas-connectors"
-        width={1}
-        height={1}
-        style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none' }}
-      >
-        {LINKS.map(({ from, to }) => {
-          const { d, tail, tip, deg } = connectorPath(frameBox(pos[from]), frameBox(pos[to]))
-          return (
-            <g key={`${from}->${to}`}>
-              <path d={d} fill="none" stroke={CONNECTOR_COLOR} strokeWidth={1.75} />
-              {/* Start: a circle on the source (hub) end. */}
-              <circle cx={tail.x} cy={tail.y} r={3.5} fill={CONNECTOR_COLOR} />
-              {/* End: an arrowhead on the target end. */}
-              <polygon
-                points="0,-5 10,0 0,5"
-                transform={`translate(${tip.x},${tip.y}) rotate(${deg})`}
-                fill={CONNECTOR_COLOR}
-              />
+      {/* Connector layer — drawn into the screen-space overlay (outside the
+          rasterised world) so the vectors stay crisp at any zoom. The world
+          camera transform is re-applied here in SVG space, so paths built in
+          world coordinates line up exactly with the boards. */}
+      {linksLayer &&
+        createPortal(
+          <svg
+            width="100%"
+            height="100%"
+            style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}
+          >
+            <g transform={`translate(${viewport.x} ${viewport.y}) scale(${viewport.scale})`}>
+              {LINKS.map(({ from, to }) => (
+                <Connector
+                  key={`${from}->${to}`}
+                  geom={connectorPath(frameBox(pos[from]), frameBox(pos[to]))}
+                  onClick={() => onFocus(to)}
+                />
+              ))}
             </g>
-          )
-        })}
-      </svg>
+          </svg>,
+          linksLayer,
+        )}
 
       {/* Screen artboards. */}
       {SCREENS.map((b) => (
@@ -271,6 +297,46 @@ export function AtlasBoards({ focusedId, onFocus, resetNonce = 0 }: AtlasBoardsP
         />
       ))}
     </>
+  )
+}
+
+type ConnectorProps = {
+  geom: ReturnType<typeof connectorPath>
+  /** navigate to the screen this connector points at. */
+  onClick: () => void
+}
+
+/**
+ * A single flow connector. Idle it's a faint white leader; on hover it lights up
+ * noon-pink (#F7306F) at full opacity with a 3× stroke and turns into a clickable
+ * link that flies the camera to the screen it connects to. A transparent wide
+ * hit-path underneath makes the thin line easy to hover and click.
+ */
+function Connector({ geom, onClick }: ConnectorProps) {
+  const { d, tail, tip, deg } = geom
+  const [hover, setHover] = useState(false)
+  const color = hover ? CONNECTOR_HOVER_COLOR : CONNECTOR_COLOR
+  const width = hover ? CONNECTOR_WIDTH * 2 : CONNECTOR_WIDTH
+
+  return (
+    <g
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
+      onClick={onClick}
+      style={{ pointerEvents: 'auto', cursor: 'pointer', opacity: hover ? 1 : undefined }}
+    >
+      {/* Wide, invisible hit area so the thin line is easy to hover/click. */}
+      <path d={d} fill="none" stroke="transparent" strokeWidth={16} />
+      <path d={d} fill="none" stroke={color} strokeWidth={width} />
+      {/* Start: a 6×6 circle on the source (hub) end. */}
+      <circle cx={tail.x} cy={tail.y} r={3} fill={color} />
+      {/* End: an arrowhead on the target end. */}
+      <polygon
+        points="0,-5 10,0 0,5"
+        transform={`translate(${tip.x},${tip.y}) rotate(${deg})`}
+        fill={color}
+      />
+    </g>
   )
 }
 
@@ -335,6 +401,36 @@ export function atlasInitialViewport(vw: number, vh: number): Vec & { scale: num
   return {
     x: vw / 2 - (fb.x + fb.w / 2) * scale,
     y: vh / 2 - (fb.y + fb.h / 2) * scale,
+    scale,
+  }
+}
+
+/**
+ * Overview camera: frame *every* board so the whole atlas is visible at once,
+ * with a margin around it. This is the opening shot, before the intro flies
+ * into the entry screen.
+ */
+export function atlasOverviewViewport(vw: number, vh: number): Vec & { scale: number } {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const b of SCREENS) {
+    const fb = frameBox({ x: b.x, y: b.y })
+    minX = Math.min(minX, b.x) // label starts at the board's x/y
+    minY = Math.min(minY, b.y)
+    maxX = Math.max(maxX, b.x + CARD_W)
+    maxY = Math.max(maxY, fb.y + fb.h)
+  }
+  const w = maxX - minX
+  const h = maxY - minY
+  const FILL = 0.78 // fraction of the viewport the map fills — the rest is margin
+  const scale = Math.min(4, Math.max(0.1, Math.min((vw * FILL) / w, (vh * FILL) / h)))
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+  return {
+    x: vw / 2 - cx * scale,
+    y: vh / 2 - cy * scale,
     scale,
   }
 }

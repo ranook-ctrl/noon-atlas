@@ -17,6 +17,46 @@ const ZOOM_SENSITIVITY = 0.02
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)
+
+/**
+ * A CSS-style `cubic-bezier(x1, y1, x2, y2)` timing function, returned as an
+ * easing `(t) => eased`. Endpoints P0=(0,0) and P3=(1,1) are fixed; for a given
+ * progress `t` we solve x(s)=t with a few Newton steps and return y(s).
+ */
+export function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
+  const cx = 3 * x1
+  const bx = 3 * (x2 - x1) - cx
+  const ax = 1 - cx - bx
+  const cy = 3 * y1
+  const by = 3 * (y2 - y1) - cy
+  const ay = 1 - cy - by
+  const sampleX = (s: number) => ((ax * s + bx) * s + cx) * s
+  const sampleY = (s: number) => ((ay * s + by) * s + cy) * s
+  const slopeX = (s: number) => (3 * ax * s + 2 * bx) * s + cx
+  return (t: number) => {
+    if (t <= 0) return 0
+    if (t >= 1) return 1
+    let s = t
+    for (let i = 0; i < 5; i++) {
+      const dx = sampleX(s) - t
+      if (Math.abs(dx) < 1e-4) break
+      const d = slopeX(s)
+      if (Math.abs(d) < 1e-6) break
+      s -= dx / d
+    }
+    return sampleY(clamp(s, 0, 1))
+  }
+}
+
+/** Options for {@link ViewportController.animateTo}. */
+export interface AnimateOpts {
+  /** Duration in ms (default 450). */
+  duration?: number
+  /** Easing `(t) => eased`, both in [0,1] (default easeOutCubic). */
+  easing?: (t: number) => number
+}
+
 /** Convert a screen point (relative to the canvas element) into world coordinates. */
 export function screenToWorld(viewport: Viewport, sx: number, sy: number) {
   return {
@@ -36,7 +76,7 @@ export interface ViewportController {
   reset: () => void
   zoomBy: (factor: number) => void
   /** Smoothly animate the viewport to a target pan/zoom (eased). */
-  animateTo: (target: Partial<Viewport>, duration?: number) => void
+  animateTo: (target: Partial<Viewport>, opts?: AnimateOpts) => void
 }
 
 /**
@@ -69,20 +109,22 @@ export function useViewport(initial?: Partial<Viewport>): ViewportController {
   }, [])
 
   const animateTo = useCallback(
-    (target: Partial<Viewport>, duration = 450) => {
+    (target: Partial<Viewport>, opts?: AnimateOpts) => {
       cancelAnim()
       const from = vpRef.current
       const to = { ...from, ...target }
+      const duration = opts?.duration ?? 450
+      const ease = opts?.easing ?? easeOutCubic
       const start = performance.now()
-      const ease = (t: number) => 1 - Math.pow(1 - t, 3) // easeOutCubic
       const tick = (now: number) => {
-        const k = ease(Math.min(1, (now - start) / duration))
+        const t = Math.min(1, (now - start) / duration)
+        const k = ease(t)
         setViewport({
           x: from.x + (to.x - from.x) * k,
           y: from.y + (to.y - from.y) * k,
           scale: from.scale + (to.scale - from.scale) * k,
         })
-        anim.current = k < 1 ? requestAnimationFrame(tick) : null
+        anim.current = t < 1 ? requestAnimationFrame(tick) : null
       }
       anim.current = requestAnimationFrame(tick)
     },

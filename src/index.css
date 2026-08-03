@@ -252,6 +252,16 @@ body {
   will-change: transform;
 }
 
+/* Screen-space overlay for vector connectors. Deliberately NOT a composited /
+   rasterised layer (no will-change/3D transform), so SVG drawn here re-renders
+   crisply at every zoom level instead of being bitmap-scaled with the world. */
+.atlas-canvas__links {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
 /* A section mounted onto the canvas, positioned in world space. */
 .atlas-section {
   position: absolute;
