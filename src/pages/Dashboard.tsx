@@ -3,10 +3,11 @@ import type { CSSProperties } from 'react'
 import {
   InfiniteCanvas,
   AtlasBoards,
-  atlasInitialViewport,
+  atlasOverviewViewport,
   ATLAS_SCREENS,
   ATLAS_LINKS,
   flowPathTo,
+  INTRO_HOLD_MS,
 } from '../canvas'
 import {
   TopNav,
@@ -71,12 +72,14 @@ export default function Dashboard() {
   // The artboard currently in focus on the canvas — drives the Right Nav preview
   // and the breadcrumb flow map. Homepage is the entry screen.
   const [focusedId, setFocusedId] = useState('home')
-  // Right Nav visibility. Starts closed, then slides in on load; the close icon
-  // slides it out, and focusing any artboard slides it back in (800ms ease).
+  // Right Nav visibility. Stays closed through the overview so the whole-atlas
+  // frame reads cleanly (nothing covering the artboards), then slides in in
+  // step with the intro zoom into the Homepage — both start together. The close
+  // icon slides it out, and focusing any artboard slides it back in (800ms ease).
   const [rightNavOpen, setRightNavOpen] = useState(false)
   useEffect(() => {
-    const r = requestAnimationFrame(() => setRightNavOpen(true))
-    return () => cancelAnimationFrame(r)
+    const t = setTimeout(() => setRightNavOpen(true), INTRO_HOLD_MS)
+    return () => clearTimeout(t)
   }, [])
 
   // Focus a screen and (re)open the inspector — used by board taps and
@@ -131,10 +134,11 @@ export default function Dashboard() {
   return (
     <div className="dashboard" style={{ '--ui-scale': uiScale } as CSSProperties}>
       {/* z-index 0 — the pannable infinite plane, with the screen artboards
-          mounted on it (centred on the focused Homepage hub on load). */}
+          mounted on it. Opens framing the whole atlas (overview), then the
+          intro flies into the focused Homepage hub. */}
       <InfiniteCanvas
         showControls={false}
-        initial={atlasInitialViewport(vw, vh)}
+        initial={atlasOverviewViewport(vw, vh)}
       >
         <AtlasBoards focusedId={focusedId} onFocus={focusScreen} resetNonce={resetNonce} />
       </InfiniteCanvas>
