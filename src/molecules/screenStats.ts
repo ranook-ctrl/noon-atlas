@@ -39,3 +39,29 @@ export function screenStats(id: string): ScreenStats {
     ],
   }
 }
+
+/**
+ * Flow-level stats for a connector — the parameter labels are fixed to the Flow
+ * Stats component library (green funnel metrics, then orange monetary metrics),
+ * while the right-hand values are randomised but stable per flow id, so each
+ * flow shows its own numbers and the reels roll to fresh values as you move
+ * between connectors.
+ */
+export function flowStats(flowId: string): ScreenStats {
+  const rnd = seeded(`flow:${flowId}`)
+  const rand = (min: number, max: number) => rnd() * (max - min) + min
+  const grouped = (min: number, max: number) => Math.round(rand(min, max)).toLocaleString('en-US')
+  return {
+    primary: [
+      { label: 'Entry-point CTR', value: `${rand(5, 20).toFixed(1)}%` },
+      { label: 'Downstream conversion', value: `${rand(10, 40).toFixed(1)}%` },
+      { label: 'Drop off rate', value: `${Math.round(rand(40, 80))}%` },
+    ],
+    secondary: [
+      { label: 'atc_gmv_per_user', value: rand(100, 600).toFixed(2) },
+      { label: 'atc_gmv_per_day', value: grouped(500_000, 3_000_000) },
+      { label: 'Monetisation_per_day', value: grouped(100_000, 900_000) },
+      { label: 'GP contribution', value: `${rand(2, 12).toFixed(1)}%` },
+    ],
+  }
+}
