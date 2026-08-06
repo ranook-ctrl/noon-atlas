@@ -9,7 +9,6 @@ import {
   BreadcrumbsTab,
   Sidebar,
   StatsBar,
-  EdgeInspector,
   CommandPalette,
   ShortcutSheet,
   LoadingOverlay,
@@ -235,12 +234,6 @@ export default function Dashboard() {
    * currently in the panel*, and a subject change closes it with no effect at all.
    */
   const [renamingId, setRenamingId] = useState<ScreenId | null>(null)
-  /**
-   * Which flow's Trigger row is open for editing, or null. Keyed by id rather than a
-   * boolean for the same reason as `renamingId`: a boolean plus a reset-on-change effect
-   * would be cleared by the very selection change that opens it.
-   */
-  const [editingActionFlowId, setEditingActionFlowId] = useState<FlowId | null>(null)
   useEffect(() => {
     if (!notice) return
     // Long enough to read a count and reach for Undo, short enough not to become chrome.
@@ -604,7 +597,11 @@ export default function Dashboard() {
 
   const selectFlow = useCallback((id: FlowId | null) => {
     setSelectedFlowId(id)
-    if (id) setRightNavOpen(true)
+    // Deliberately does NOT open the right-hand panel. Connector stats live on hover (the
+    // EdgeCard) — a click just *selects* the edge, which is what surfaces its reconnect
+    // handles and lets ⌫ delete it. The old side panel that popped up to show the same
+    // numbers hover already shows was redundant, so it's gone.
+    if (id) setRightNavOpen(false)
   }, [])
 
   // ── Section-stats card geometry ──────────────────────────────────────────
@@ -897,12 +894,11 @@ export default function Dashboard() {
             }
             drawFlowMode={effectiveTool === 'drawFlow'}
             onCreateFlow={(from, to) =>
-              // Open the new edge with its Trigger ready to author — the one thing a drawn
-              // flow can't infer. Drop back to Select so the next click doesn't draw again.
+              // Create, select (so its handles show), and drop back to Select so the next
+              // click doesn't draw again. No panel pops — connector detail is hover-only.
               actions.createFlow(from, to, (flow) => {
                 setActiveTool('select')
                 selectFlow(flow.id)
-                setEditingActionFlowId(flow.id)
               })
             }
             onReconnectFlow={(id, patch) => actions.reconnectFlow(id, patch)}
@@ -1007,34 +1003,16 @@ export default function Dashboard() {
         {/* The right panel is one slot with two occupants: a selected flow takes
             precedence over the focused screen, because clicking an edge is a more
             specific intent than having a screen focused. */}
-        {mode === 'map' && (selectedEdge || focused) && (
+        {mode === 'map' && focused && (
           <div className={`dashboard__widget dashboard__right-nav${rightNavOpen ? ' is-open' : ''}`}>
             <PanelSwap
               swapKey={
-                selectedEdge
-                  ? `edge-${selectedEdge.flow.id}`
-                  : selectedScreens.length > 1
-                    ? `multi-${selectedScreens.length}`
-                    : `screen-${focused?.id ?? 'none'}`
+                selectedScreens.length > 1
+                  ? `multi-${selectedScreens.length}`
+                  : `screen-${focused?.id ?? 'none'}`
               }
             >
-            {selectedEdge ? (
-              <EdgeInspector
-                fromLabel={selectedEdge.from.label}
-                toLabel={selectedEdge.to.label}
-                fromId={selectedEdge.from.id}
-                toId={selectedEdge.to.id}
-                action={selectedEdge.flow.action}
-                onEditAction={(value) => actions.setFlowAction(selectedEdge.flow.id, value)}
-                editingAction={editingActionFlowId === selectedEdge.flow.id}
-                onEditingActionChange={(next) =>
-                  setEditingActionFlowId(next ? selectedEdge.flow.id : null)
-                }
-                metrics={selectedEdge.metrics}
-                onSelectScreen={focusScreen}
-                onClose={() => setSelectedFlowId(null)}
-              />
-            ) : selectedScreens.length > 1 ? (
+            {selectedScreens.length > 1 ? (
               <MultiSelectPanel
                 screens={selectedScreens}
                 metricsById={screenMetricsById}
@@ -1178,6 +1156,7 @@ export default function Dashboard() {
             y={hoveredFlow.y}
             fromLabel={from.label}
             toLabel={to.label}
+            action={f.action}
             metrics={flowMetricById.get(f.id) ?? null}
           />
         )

@@ -27,6 +27,7 @@ export function EdgeCard({
   y,
   fromLabel,
   toLabel,
+  action,
   metrics,
 }: {
   /** Viewport coordinates of the cursor. */
@@ -34,6 +35,8 @@ export function EdgeCard({
   y: number
   fromLabel: string
   toLabel: string
+  /** The affordance that triggers this flow, if recorded. Shown under the route. */
+  action?: string
   metrics: MetricSet | null
 }) {
   const all = metrics ? [...metrics.primary, ...metrics.secondary] : []
@@ -43,7 +46,7 @@ export function EdgeCard({
 
   // Keep the card on screen: flip left / above when close to an edge.
   const W = 220
-  const H = 40 + rows.length * 21
+  const H = 40 + (action ? 18 : 0) + rows.length * 21
   const left = Math.min(x + 16, window.innerWidth - W - 12)
   const top = Math.min(Math.max(12, y + 14), window.innerHeight - H - 12)
 
@@ -56,6 +59,8 @@ export function EdgeCard({
         </span>
         <span>{toLabel}</span>
       </div>
+
+      {action && <div className="edge-card__trigger pixel-line">{action}</div>}
 
       {rows.length === 0 ? (
         <div className="edge-card__label pixel-line">Loading flow metrics…</div>

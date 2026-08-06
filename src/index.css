@@ -2733,6 +2733,13 @@ kbd {
   color: var(--text-1);
 }
 
+.edge-card__trigger {
+  margin: -2px 0 8px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--noon-pink);
+}
+
 .edge-card__arrow {
   color: var(--noon-pink);
 }
