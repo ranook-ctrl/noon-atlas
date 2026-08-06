@@ -21,14 +21,15 @@ export const Minimap = memo(function Minimap({
   flows,
   focusedId,
   viewport,
-  onJump,
+  onPan,
 }: {
   screens: Screen[]
   flows: Flow[]
   focusedId: ScreenId | null
   /** Visible world rect, so the frame can be drawn. */
   viewport: { x: number; y: number; w: number; h: number } | null
-  onJump: (world: { x: number; y: number }) => void
+  /** Centre the camera on a world point. `animate:false` while dragging the lens. */
+  onPan: (world: { x: number; y: number }, opts?: { animate?: boolean }) => void
 }) {
   const bounds = useMemo(
     () => boardsBounds(screens.map((s) => s.position)),
@@ -57,9 +58,25 @@ export const Minimap = memo(function Minimap({
 
   const byId = new Map(screens.map((s) => [s.id, s]))
 
-  const jump = (e: ReactPointerEvent) => {
+  /**
+   * Press-and-drag the lens. Pointer-down centres the camera there (a plain click reads
+   * as a jump); holding and moving glides it continuously — the minimap becomes a
+   * steering wheel rather than only a locator. `project.toWorld` is captured per-gesture
+   * so it can't go stale mid-drag.
+   */
+  const onPointerDown = (e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
     const r = e.currentTarget.getBoundingClientRect()
-    onJump(project.toWorld(e.clientX - r.left, e.clientY - r.top))
+    const toWorld = (cx: number, cy: number) => project.toWorld(cx - r.left, cy - r.top)
+    onPan(toWorld(e.clientX, e.clientY), { animate: false })
+    const move = (ev: PointerEvent) => onPan(toWorld(ev.clientX, ev.clientY), { animate: false })
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
   }
 
   return (
@@ -68,10 +85,7 @@ export const Minimap = memo(function Minimap({
         width={W}
         height={H}
         className="minimap__svg"
-        onPointerDown={(e) => {
-          e.stopPropagation()
-          jump(e)
-        }}
+        onPointerDown={onPointerDown}
       >
         {/* Connectors as straight lines — curvature is meaningless at this size. */}
         {flows.map((f) => {

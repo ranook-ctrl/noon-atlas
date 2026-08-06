@@ -24,6 +24,7 @@ import type {
 } from '../../domain/types'
 import type {
   AtlasRepository,
+  FlowPatch,
   NewFlow,
   NewScreen,
   ReadOpts,
@@ -281,8 +282,42 @@ export class LocalAtlasRepository implements AtlasRepository {
         from: input.from,
         to: input.to,
         label: input.label,
+        action: input.action,
       }
       return { snapshot: { ...snapshot, flows: [...snapshot.flows, flow] }, data: flow }
+    })
+  }
+
+  async updateFlow(
+    projectId: ProjectId,
+    id: FlowId,
+    patch: FlowPatch,
+    opts?: WriteOpts,
+  ): Promise<WriteResult<Flow>> {
+    return this.mutate(projectId, opts, (snapshot) => {
+      const flow = snapshot.flows.find((f) => f.id === id)
+      if (!flow) throw new NotFoundError(`flow ${id}`)
+      const from = patch.from ?? flow.from
+      const to = patch.to ?? flow.to
+      // Endpoint edits (reconnect) must still point at real screens and not collapse the
+      // edge onto one board or duplicate an existing one.
+      if (patch.from != null || patch.to != null) {
+        for (const end of [from, to]) {
+          if (!snapshot.screens.some((s) => s.id === end)) throw new NotFoundError(`screen ${end}`)
+        }
+        if (from === to) throw new NotFoundError(`flow ${id}: endpoints coincide`)
+        if (snapshot.flows.some((f) => f.id !== id && f.from === from && f.to === to))
+          throw new NotFoundError(`flow ${from}→${to} already exists`)
+      }
+      // Blank clears the action rather than storing "" — an empty string would render as a
+      // present-but-empty Trigger row, which reads as broken. `action` unset in the patch
+      // means "leave it"; explicit blank means "clear".
+      const action = 'action' in patch ? patch.action?.trim() || undefined : flow.action
+      const next: Flow = { ...flow, from, to, action }
+      return {
+        snapshot: { ...snapshot, flows: snapshot.flows.map((f) => (f.id === id ? next : f)) },
+        data: next,
+      }
     })
   }
 

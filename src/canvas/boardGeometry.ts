@@ -178,6 +178,159 @@ export function connectorPath(s: Box, t: Box): ConnectorGeometry {
  * which cannot fail that way. Pass a world-space rect, not a computed viewport.
  */
 
+export type AlignEdge = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom'
+export type DistributeAxis = 'h' | 'v'
+
+/**
+ * New positions that align a set of boards to a shared edge or centre.
+ *
+ * Aligns against the *frame* box, not the label-inclusive top-left: a designer lining up
+ * "left edges" means the phone frames, not an invisible caption band above them. Returns
+ * only the boards that actually move, so the caller records one clean edit.
+ *
+ * `position` is the card's top-left (label + frame); `frameBox` adds the label offset. We
+ * solve in frame space, then subtract that offset back out to get the position to store.
+ */
+export function alignPositions(
+  items: { id: string; position: Vec }[],
+  edge: AlignEdge,
+): { id: string; position: Vec }[] {
+  if (items.length < 2) return []
+  const boxes = items.map((it) => ({ it, fb: frameBox(it.position) }))
+  const minX = Math.min(...boxes.map((b) => b.fb.x))
+  const maxX = Math.max(...boxes.map((b) => b.fb.x + b.fb.w))
+  const minY = Math.min(...boxes.map((b) => b.fb.y))
+  const maxY = Math.max(...boxes.map((b) => b.fb.y + b.fb.h))
+  const cx = (minX + maxX) / 2
+  const cy = (minY + maxY) / 2
+
+  const out: { id: string; position: Vec }[] = []
+  for (const { it, fb } of boxes) {
+    let fx = fb.x
+    let fy = fb.y
+    switch (edge) {
+      case 'left': fx = minX; break
+      case 'right': fx = maxX - fb.w; break
+      case 'hcenter': fx = cx - fb.w / 2; break
+      case 'top': fy = minY; break
+      case 'bottom': fy = maxY - fb.h; break
+      case 'vcenter': fy = cy - fb.h / 2; break
+    }
+    // Convert the target frame corner back to the card's stored top-left.
+    const next = { x: it.position.x + (fx - fb.x), y: it.position.y + (fy - fb.y) }
+    if (next.x !== it.position.x || next.y !== it.position.y) out.push({ id: it.id, position: next })
+  }
+  return out
+}
+
+/**
+ * New positions that space boards evenly along one axis, keeping the two extremes fixed
+ * and equalising the *gaps* between frames (not centre-to-centre, which looks uneven when
+ * boards differ in size). Needs at least three to mean anything.
+ */
+export function distributePositions(
+  items: { id: string; position: Vec }[],
+  axis: DistributeAxis,
+): { id: string; position: Vec }[] {
+  if (items.length < 3) return []
+  const boxes = items.map((it) => ({ it, fb: frameBox(it.position) }))
+  const size = (b: (typeof boxes)[number]) => (axis === 'h' ? b.fb.w : b.fb.h)
+  const start = (b: (typeof boxes)[number]) => (axis === 'h' ? b.fb.x : b.fb.y)
+  const sorted = [...boxes].sort((a, b) => start(a) - start(b))
+
+  const first = sorted[0]
+  const last = sorted[sorted.length - 1]
+  const span = start(last) - (start(first) + size(first))
+  const totalInner = sorted.slice(1, -1).reduce((sum, b) => sum + size(b), 0)
+  const gap = (span - totalInner) / (sorted.length - 1)
+
+  const out: { id: string; position: Vec }[] = []
+  let cursor = start(first) + size(first) + gap
+  for (const b of sorted.slice(1, -1)) {
+    const targetStart = cursor
+    const delta = targetStart - start(b)
+    if (delta !== 0) {
+      const next =
+        axis === 'h'
+          ? { x: b.it.position.x + delta, y: b.it.position.y }
+          : { x: b.it.position.x, y: b.it.position.y + delta }
+      out.push({ id: b.it.id, position: next })
+    }
+    cursor += size(b) + gap
+  }
+  return out
+}
+
+/** A live alignment guide: a world-space line the dragged board snapped to. */
+export type AlignGuide = { axis: 'x' | 'y'; at: number; from: number; to: number }
+
+/**
+ * Snap a dragging board's position to its neighbours' edges/centres, and report the guide
+ * lines to draw — the Figma "smart guide" behaviour.
+ *
+ * Compares the dragged frame's three vertical lines (left / centre-x / right) against every
+ * other frame's three, and likewise horizontally, snapping each axis independently to the
+ * nearest match within `tolerance` (a world distance; callers pass screen-px ÷ zoom so it
+ * feels constant). Returns the adjusted top-left plus one guide per snapped axis, each
+ * spanning both involved frames so the line visibly connects them.
+ */
+export function resolveAlign(
+  draggedPos: Vec,
+  others: { position: Vec }[],
+  tolerance: number,
+): { position: Vec; guides: AlignGuide[] } {
+  const fb = frameBox(draggedPos)
+  const vLines = [fb.x, fb.x + fb.w / 2, fb.x + fb.w] // left, cx, right
+  const hLines = [fb.y, fb.y + fb.h / 2, fb.y + fb.h] // top, cy, bottom
+
+  let bestX: { delta: number; at: number; other: Box; line: number } | null = null
+  let bestY: { delta: number; at: number; other: Box; line: number } | null = null
+
+  for (const o of others) {
+    const ob = frameBox(o.position)
+    const oV = [ob.x, ob.x + ob.w / 2, ob.x + ob.w]
+    const oH = [ob.y, ob.y + ob.h / 2, ob.y + ob.h]
+    for (const line of vLines) {
+      for (const ol of oV) {
+        const d = Math.abs(line - ol)
+        if (d <= tolerance && (!bestX || d < bestX.delta))
+          bestX = { delta: d, at: ol, other: ob, line }
+      }
+    }
+    for (const line of hLines) {
+      for (const ol of oH) {
+        const d = Math.abs(line - ol)
+        if (d <= tolerance && (!bestY || d < bestY.delta))
+          bestY = { delta: d, at: ol, other: ob, line }
+      }
+    }
+  }
+
+  const position = { ...draggedPos }
+  const guides: AlignGuide[] = []
+  if (bestX) {
+    position.x += bestX.at - bestX.line // shift so the matched line lands exactly
+    const snapped = frameBox(position)
+    guides.push({
+      axis: 'x',
+      at: bestX.at,
+      from: Math.min(snapped.y, bestX.other.y),
+      to: Math.max(snapped.y + snapped.h, bestX.other.y + bestX.other.h),
+    })
+  }
+  if (bestY) {
+    position.y += bestY.at - bestY.line
+    const snapped = frameBox(position)
+    guides.push({
+      axis: 'y',
+      at: bestY.at,
+      from: Math.min(snapped.x, bestY.other.x),
+      to: Math.max(snapped.x + snapped.w, bestY.other.x + bestY.other.w),
+    })
+  }
+  return { position, guides }
+}
+
 /** The bounding box of every board's frame — fit-to-content / minimap extents. */
 export function boardsBounds(positions: Vec[]): Box | null {
   if (!positions.length) return null

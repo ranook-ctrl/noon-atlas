@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { InfiniteCanvas, AtlasBoards, AtlasShell, Minimap, boardsBounds, frameBox } from '../canvas'
+import { InfiniteCanvas, AtlasBoards, AtlasShell, Minimap, boardsBounds, frameBox, GRID_UNIT } from '../canvas'
 import type { CanvasApi, FlowWeight } from '../canvas'
 import {
   TopNav,
@@ -235,6 +235,12 @@ export default function Dashboard() {
    * currently in the panel*, and a subject change closes it with no effect at all.
    */
   const [renamingId, setRenamingId] = useState<ScreenId | null>(null)
+  /**
+   * Which flow's Trigger row is open for editing, or null. Keyed by id rather than a
+   * boolean for the same reason as `renamingId`: a boolean plus a reset-on-change effect
+   * would be cleared by the very selection change that opens it.
+   */
+  const [editingActionFlowId, setEditingActionFlowId] = useState<FlowId | null>(null)
   useEffect(() => {
     if (!notice) return
     // Long enough to read a count and reach for Undo, short enough not to become chrome.
@@ -260,6 +266,19 @@ export default function Dashboard() {
    */
   const deleteSelection = useCallback(() => {
     if (!snapshot) return
+    // A selected connector takes priority: pressing Delete with an edge selected removes
+    // the edge, not whatever boards happen to also be in the selection.
+    if (selectedFlowId) {
+      const flow = snapshot.flows.find((f) => f.id === selectedFlowId)
+      actions.deleteFlow(selectedFlowId)
+      setSelectedFlowId(null)
+      if (flow) {
+        const from = snapshot.screens.find((s) => s.id === flow.from)?.label ?? flow.from
+        const to = snapshot.screens.find((s) => s.id === flow.to)?.label ?? flow.to
+        setNotice(`Flow ${from} → ${to} removed`)
+      }
+      return
+    }
     const ids = [...selectedIds]
     if (ids.length === 0) return
     if (ids.includes(snapshot.rootScreenId)) {
@@ -279,11 +298,30 @@ export default function Dashboard() {
         (flowCount ? ` and ${flowCount} flow${flowCount === 1 ? '' : 's'}` : '') +
         ' removed',
     )
-  }, [snapshot, selectedIds, actions, focusedId, changeSelection])
+  }, [snapshot, selectedIds, selectedFlowId, actions, focusedId, changeSelection])
+
+  /**
+   * Keyboard nudge of the selection by one grid unit (⇧ → ten).
+   *
+   * On the current selection, so a tap-then-nudge works (a tap selects). Snapped to
+   * `GRID_UNIT` so nudged boards land on the same lines the grid draws and a dragged
+   * board snaps to — otherwise nudging and dragging would disagree about "aligned".
+   * `preventDefault` because ⌥+← is browser Back on some platforms.
+   */
+  const nudge = useCallback(
+    (e: KeyboardEvent, dx: number, dy: number) => {
+      e.preventDefault()
+      const ids = [...selectedIds]
+      if (ids.length === 0) return
+      const step = e.shiftKey ? GRID_UNIT * 10 : GRID_UNIT
+      actions.nudgeSelection(ids, { x: dx * step, y: dy * step })
+    },
+    [selectedIds, actions],
+  )
 
   const handleTool = useCallback(
     (id: ToolId) => {
-      if (id === 'select' || id === 'pan') setActiveTool(id)
+      if (id === 'select' || id === 'pan' || id === 'drawFlow') setActiveTool(id)
       else if (id === 'snap' || id === 'minimap' || id === 'isolate') togglePref(id)
       else if (id === 'delete') deleteSelection()
     },
@@ -731,6 +769,10 @@ export default function Dashboard() {
         e.preventDefault()
         deleteSelection()
       },
+      nudgeLeft: (e) => nudge(e, -1, 0),
+      nudgeRight: (e) => nudge(e, 1, 0),
+      nudgeUp: (e) => nudge(e, 0, -1),
+      nudgeDown: (e) => nudge(e, 0, 1),
       modeMap: () => hasGraph && switchMode('map'),
       modeScreens: () => hasGraph && switchMode('screens'),
       fitAll: () => cameraRef.current?.fitContent(),
@@ -767,6 +809,7 @@ export default function Dashboard() {
       actions,
       handleTool,
       deleteSelection,
+      nudge,
       hasGraph,
       switchMode,
       focused,
@@ -852,6 +895,17 @@ export default function Dashboard() {
             onHoverFlow={(id, at) =>
               setHoveredFlow(id && at ? { id, x: at.x, y: at.y } : null)
             }
+            drawFlowMode={effectiveTool === 'drawFlow'}
+            onCreateFlow={(from, to) =>
+              // Open the new edge with its Trigger ready to author — the one thing a drawn
+              // flow can't infer. Drop back to Select so the next click doesn't draw again.
+              actions.createFlow(from, to, (flow) => {
+                setActiveTool('select')
+                selectFlow(flow.id)
+                setEditingActionFlowId(flow.id)
+              })
+            }
+            onReconnectFlow={(id, patch) => actions.reconnectFlow(id, patch)}
           />
         </InfiniteCanvas>
       )}
@@ -971,6 +1025,11 @@ export default function Dashboard() {
                 fromId={selectedEdge.from.id}
                 toId={selectedEdge.to.id}
                 action={selectedEdge.flow.action}
+                onEditAction={(value) => actions.setFlowAction(selectedEdge.flow.id, value)}
+                editingAction={editingActionFlowId === selectedEdge.flow.id}
+                onEditingActionChange={(next) =>
+                  setEditingActionFlowId(next ? selectedEdge.flow.id : null)
+                }
                 metrics={selectedEdge.metrics}
                 onSelectScreen={focusScreen}
                 onClose={() => setSelectedFlowId(null)}
@@ -980,6 +1039,8 @@ export default function Dashboard() {
                 screens={selectedScreens}
                 metricsById={screenMetricsById}
                 canDelete={!!snapshot && !selectedIds.has(snapshot.rootScreenId)}
+                onAlign={(edge) => actions.alignSelection([...selectedIds], edge)}
+                onDistribute={(axis) => actions.distributeSelection([...selectedIds], axis)}
                 onDelete={deleteSelection}
                 onFocusScreen={focusScreen}
                 onClose={() => changeSelection(new Set())}
@@ -1073,9 +1134,7 @@ export default function Dashboard() {
               flows={snapshot.flows}
               focusedId={focusedId}
               viewport={viewRect}
-              onJump={(world) =>
-                cameraRef.current?.focusRect({ x: world.x - 100, y: world.y - 200, w: 200, h: 400 })
-              }
+              onPan={(world, opts) => cameraRef.current?.panTo(world, opts)}
             />
           </div>
         )}

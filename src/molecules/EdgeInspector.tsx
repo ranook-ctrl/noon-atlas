@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { MaskIcon } from '../components/MaskIcon'
 import { RollingNumber } from '../components/RollingNumber'
 import type { Metric, MetricSet } from '../domain/metrics'
@@ -14,10 +15,101 @@ type EdgeInspectorProps = {
   toId: ScreenId
   /** What the user taps to make this transition, when it's recorded. */
   action?: string
+  /** Commit a new action label. Absent → the Trigger is read-only. */
+  onEditAction?: (value: string) => void
+  /** Controlled edit mode, so a freshly-drawn edge can open with the field focused. */
+  editingAction?: boolean
+  onEditingActionChange?: (editing: boolean) => void
   metrics: MetricSet | null
   /** tap either end → focus that screen on the canvas */
   onSelectScreen?: (id: ScreenId) => void
   onClose?: () => void
+}
+
+/**
+ * The Trigger row — the flow's affordance, editable in place.
+ *
+ * Read-only unless `onEdit` is supplied. Mirrors the screen-title editor's contract
+ * (`blur` commits, `Escape` reverts) so authoring feels the same wherever you do it. When
+ * there's no action yet, it shows a placeholder "Set trigger…" affordance rather than
+ * hiding — otherwise a freshly-drawn edge would offer nothing to click.
+ */
+function TriggerRow({
+  action,
+  onEdit,
+  editing,
+  onEditingChange,
+}: {
+  action?: string
+  onEdit?: (value: string) => void
+  editing: boolean
+  onEditingChange?: (editing: boolean) => void
+}) {
+  const [draft, setDraft] = useState(action ?? '')
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (editing) setDraft(action ?? '')
+  }, [editing, action])
+
+  useEffect(() => {
+    if (!editing) return
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [editing])
+
+  const commit = () => {
+    onEdit?.(draft)
+    onEditingChange?.(false)
+  }
+
+  if (editing) {
+    return (
+      <div className="edge-inspector__trigger">
+        <span className="pixel-line edge-inspector__trigger-label">Trigger</span>
+        <input
+          ref={inputRef}
+          className="pixel edge-inspector__trigger-input"
+          value={draft}
+          placeholder="e.g. Cart tab"
+          aria-label="Flow trigger"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              e.stopPropagation()
+              commit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              e.stopPropagation()
+              setDraft(action ?? '')
+              onEditingChange?.(false)
+            }
+          }}
+        />
+      </div>
+    )
+  }
+
+  // Read-only and no action recorded → nothing to show.
+  if (!action && !onEdit) return null
+
+  return (
+    <button
+      type="button"
+      className="edge-inspector__trigger edge-inspector__trigger--button"
+      onClick={onEdit ? () => onEditingChange?.(true) : undefined}
+      disabled={!onEdit}
+    >
+      <span className="pixel-line edge-inspector__trigger-label">Trigger</span>
+      <span
+        className={`pixel edge-inspector__trigger-value${action ? '' : ' is-empty'}`}
+      >
+        {action ?? 'Set trigger…'}
+      </span>
+    </button>
+  )
 }
 
 /**
@@ -38,6 +130,9 @@ export function EdgeInspector({
   fromId,
   toId,
   action,
+  onEditAction,
+  editingAction = false,
+  onEditingActionChange,
   metrics,
   onSelectScreen,
   onClose,
@@ -90,13 +185,14 @@ export function EdgeInspector({
       {/* The affordance that triggers this transition.
           Lives here rather than on the canvas: drawn on the connectors it was ten
           captions over the picture at once, but once you've clicked a single edge it's
-          the first thing you want to know and it costs nothing. */}
-      {action && (
-        <div className="edge-inspector__trigger">
-          <span className="pixel-line edge-inspector__trigger-label">Trigger</span>
-          <span className="pixel edge-inspector__trigger-value">{action}</span>
-        </div>
-      )}
+          the first thing you want to know and it costs nothing. Editable, because a
+          freshly-drawn flow has no action and this is the one thing it can't derive. */}
+      <TriggerRow
+        action={action}
+        onEdit={onEditAction}
+        editing={editingAction}
+        onEditingChange={onEditingActionChange}
+      />
 
       {!metrics ? (
         <div className="edge-inspector__loading pixel-line">Loading flow metrics…</div>

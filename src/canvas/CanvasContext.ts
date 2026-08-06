@@ -25,6 +25,12 @@ export interface CanvasApi {
   getViewport: () => Vec & { scale: number }
   /** Screen point (relative to the canvas) → world coordinates. */
   screenToWorld: (sx: number, sy: number) => Vec
+  /**
+   * Centre a world point in the viewport, holding the current zoom. `animate: false`
+   * tracks continuously (the minimap drag-lens); the default eases (click-to-jump).
+   * Unlike `focusRect`, this never changes scale — glancing somewhere shouldn't re-zoom.
+   */
+  panTo: (world: Vec, opts?: { animate?: boolean }) => void
   /** Animate the camera so a world-space rect is centred at 60% viewport height. */
   focusRect: (rect: Box) => void
   /** Animate the camera so a world-space rect fits inside the viewport. */

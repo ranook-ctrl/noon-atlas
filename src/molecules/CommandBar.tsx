@@ -124,12 +124,9 @@ export const TOOLS: Tool[] = [
     glyph: Glyphs.addScreen,
     why: 'Needs artboard upload, which needs a backend',
   },
-  {
-    id: 'drawFlow',
-    label: 'Draw flow',
-    glyph: Glyphs.drawFlow,
-    why: 'Edge authoring isn’t wired to the canvas yet',
-  },
+  // Live. Drag from one board to another to draw an edge; the Trigger is authored in the
+  // edge inspector afterward. `createFlow` shipped in the repo in Phase 0.
+  { id: 'drawFlow', label: 'Draw flow', hint: 'drag board → board', glyph: Glyphs.drawFlow },
   // Live. `deleteScreen` (with its flow cascade) has been implemented in the repository
   // since Phase 0 — the blocker was never a backend, it was that undo covered only position
   // moves, so a delete would have been unrecoverable. See `AtlasEdit` in AtlasProvider.
@@ -177,7 +174,11 @@ export function CommandBar({
               key={t.id}
               type="button"
               className={`commandbar__tool${!disabled ? ' has-brackets' : ''}`}
-              data-active={t.id === 'select' || t.id === 'pan' ? activeTool === t.id : !!toggles[t.id]}
+              data-active={
+                t.id === 'select' || t.id === 'pan' || t.id === 'drawFlow'
+                  ? activeTool === t.id
+                  : !!toggles[t.id]
+              }
               disabled={disabled}
               aria-label={t.label}
               aria-pressed={activeTool === t.id}

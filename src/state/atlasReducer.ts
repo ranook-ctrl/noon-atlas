@@ -69,6 +69,8 @@ export type AtlasAction =
   | { type: 'screen/restored'; screen: Screen; flows: Flow[] }
   | { type: 'flow/added'; flow: Flow }
   | { type: 'flow/removed'; id: FlowId }
+  | { type: 'flow/actionSet'; id: FlowId; action?: string }
+  | { type: 'flow/reconnected'; id: FlowId; from: ScreenId; to: ScreenId }
   | { type: 'snapshot/replace'; snapshot: AtlasSnapshot; reframe?: boolean }
   | { type: 'error/dismiss' }
 
@@ -187,6 +189,32 @@ export function atlasReducer(state: AtlasState, action: AtlasAction): AtlasState
         snapshot: {
           ...state.snapshot,
           flows: state.snapshot.flows.filter((f) => f.id !== action.id),
+        },
+      }
+    }
+
+    case 'flow/actionSet': {
+      if (!state.snapshot) return state
+      return {
+        ...state,
+        snapshot: {
+          ...state.snapshot,
+          flows: state.snapshot.flows.map((f) =>
+            f.id === action.id ? { ...f, action: action.action } : f,
+          ),
+        },
+      }
+    }
+
+    case 'flow/reconnected': {
+      if (!state.snapshot) return state
+      return {
+        ...state,
+        snapshot: {
+          ...state.snapshot,
+          flows: state.snapshot.flows.map((f) =>
+            f.id === action.id ? { ...f, from: action.from, to: action.to } : f,
+          ),
         },
       }
     }

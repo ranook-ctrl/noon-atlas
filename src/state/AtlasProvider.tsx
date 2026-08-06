@@ -21,6 +21,8 @@ import type {
   Vec,
 } from '../domain'
 import { buildFlowGraph } from '../domain'
+import { alignPositions, distributePositions } from '../canvas/boardGeometry'
+import type { AlignEdge, DistributeAxis } from '../canvas/boardGeometry'
 import type { RepoError } from '../data/AtlasRepository'
 import { RepoError as RepoErrorClass, RevConflictError } from '../data/AtlasRepository'
 import { atlasRepo } from '../data/repositories'
@@ -63,6 +65,13 @@ type AtlasEdit =
   | { kind: 'rename'; screenId: ScreenId; before: string; after: string }
   | { kind: 'flowCreate'; flow: Flow }
   | { kind: 'flowDelete'; flow: Flow }
+  | { kind: 'flowAction'; flowId: FlowId; before?: string; after?: string }
+  | {
+      kind: 'flowReconnect'
+      flowId: FlowId
+      before: { from: ScreenId; to: ScreenId }
+      after: { from: ScreenId; to: ScreenId }
+    }
   | { kind: 'screenDelete'; screen: Screen; flows: Flow[] }
 
 export interface AtlasActions {
@@ -90,14 +99,27 @@ export interface AtlasActions {
    * tombstoning the screen and its incident flows so undo can rebuild them.
    */
   deleteScreens: (ids: ScreenId[]) => void
-  /** Draw a new flow. Ignores self-links and duplicates of an existing edge. */
-  createFlow: (from: ScreenId, to: ScreenId, action?: string) => void
+  /**
+   * Draw a new flow. Ignores self-links and duplicates of an existing edge. `onCreated`
+   * receives the persisted flow (with its repo-assigned id) so the caller can open it.
+   */
+  createFlow: (from: ScreenId, to: ScreenId, onCreated?: (flow: Flow) => void) => void
+  /** Set (or clear, with '') a flow's affordance label. Undoable. */
+  setFlowAction: (id: FlowId, action: string) => void
+  /** Re-point one end of a flow to a different screen (drag a connector handle). Undoable. */
+  reconnectFlow: (id: FlowId, patch: { from?: ScreenId; to?: ScreenId }) => void
   deleteFlow: (id: FlowId) => void
   resetLayout: () => void
-  /** Nudge every listed screen by one delta. Local only — no I/O per frame. */
+  /** Move every listed screen by one delta. Local only — no I/O per frame. */
   dragGroup: (ids: ScreenId[], delta: Vec) => void
-  /** Persist a whole group in ONE batched write, as a single undo entry. */
+  /** Persist a whole group move in ONE batched write, as a single undo entry. */
   commitGroup: (ids: ScreenId[]) => void
+  /** Keyboard nudge. Coalesces a rapid run into one undo entry via a trailing debounce. */
+  nudgeSelection: (ids: ScreenId[], delta: Vec) => void
+  /** Align the selection to a shared frame edge/centre, as one undoable move. */
+  alignSelection: (ids: ScreenId[], edge: AlignEdge) => void
+  /** Even out the gaps between the selection along one axis, as one undoable move. */
+  distributeSelection: (ids: ScreenId[], axis: DistributeAxis) => void
   undo: () => void
   redo: () => void
   dismissError: () => void
@@ -154,6 +176,8 @@ export function AtlasProvider({
   const latestDrag = useRef(new Map<ScreenId, Vec>())
   /** Fallback commit timers, in case a drag ends without a pointerup. */
   const commitTimers = useRef(new Map<ScreenId, number>())
+  /** Trailing debounce that collapses a run of nudges into one committed edit. */
+  const nudgeTimer = useRef<number | null>(null)
 
   /**
    * Start a load, superseding any that's still running.
@@ -280,6 +304,87 @@ export function AtlasProvider({
   }, [])
 
   /**
+   * Move a group locally by a delta, capturing each board's pre-move position once.
+   *
+   * The origin capture is what lets a *run* of these — a held-down nudge, or a live group
+   * drag — collapse into a single undo entry at `commitGroup`: `before` is where the run
+   * started, `after` is where it ended, regardless of how many frames were in between.
+   */
+  const moveGroupBy = useCallback((ids: ScreenId[], delta: Vec) => {
+    const snap = stateRef.current.snapshot
+    if (!snap) return
+    for (const id of ids) {
+      const sc = snap.screens.find((s) => s.id === id)
+      if (!sc) continue
+      if (!dragOrigin.current.has(id)) dragOrigin.current.set(id, { ...sc.position })
+      const next = { x: sc.position.x + delta.x, y: sc.position.y + delta.y }
+      dispatch({ type: 'screen/moved', id, position: next })
+      latestDrag.current.set(id, next)
+    }
+  }, [])
+
+  /** Flush a group move (drag or nudge run) as ONE edit and one batched write. */
+  const commitGroup = useCallback((ids: ScreenId[]) => {
+    const snap = stateRef.current.snapshot
+    const activeProject = stateRef.current.projectId
+    if (!snap || !activeProject) return
+    const moves: { screenId: ScreenId; before: Vec; after: Vec }[] = []
+    const patches: { id: ScreenId; patch: { position: Vec } }[] = []
+    for (const id of ids) {
+      const before = dragOrigin.current.get(id)
+      const sc = snap.screens.find((s) => s.id === id)
+      if (!before || !sc) continue
+      if (before.x === sc.position.x && before.y === sc.position.y) continue
+      moves.push({ screenId: id, before, after: { ...sc.position } })
+      patches.push({ id, patch: { position: { ...sc.position } } })
+      dragOrigin.current.delete(id)
+      latestDrag.current.delete(id)
+    }
+    if (patches.length === 0) return
+    record({ kind: 'move', moves })
+    for (const p of patches) dispatch({ type: 'write/start', id: p.id })
+    atlasRepo
+      .updateScreens(activeProject, patches, { expectedRev: snap.rev })
+      .then(({ rev }) => {
+        for (const p of patches) dispatch({ type: 'write/ok', id: p.id, rev })
+      })
+      .catch((err) => handleWriteError(err, patches[0].id))
+  }, [record, handleWriteError])
+
+  /**
+   * Set absolute target positions (align / distribute) as ONE edit and one batched write.
+   * `before` is read from current state, so only boards that actually move are recorded.
+   */
+  const commitLayout = useCallback((targets: { id: ScreenId; position: Vec }[]) => {
+    const snap = stateRef.current.snapshot
+    const activeProject = stateRef.current.projectId
+    if (!snap || !activeProject) return
+    const moves: { screenId: ScreenId; before: Vec; after: Vec }[] = []
+    for (const t of targets) {
+      const sc = snap.screens.find((s) => s.id === t.id)
+      if (!sc) continue
+      if (sc.position.x === t.position.x && sc.position.y === t.position.y) continue
+      moves.push({ screenId: t.id, before: { ...sc.position }, after: { ...t.position } })
+    }
+    if (moves.length === 0) return
+    record({ kind: 'move', moves })
+    for (const m of moves) {
+      dispatch({ type: 'screen/moved', id: m.screenId, position: m.after })
+      dispatch({ type: 'write/start', id: m.screenId })
+    }
+    atlasRepo
+      .updateScreens(
+        activeProject,
+        moves.map((m) => ({ id: m.screenId, patch: { position: m.after } })),
+        { expectedRev: snap.rev },
+      )
+      .then(({ rev }) => {
+        for (const m of moves) dispatch({ type: 'write/ok', id: m.screenId, rev })
+      })
+      .catch((err) => handleWriteError(err, moves[0].screenId))
+  }, [record, handleWriteError])
+
+  /**
    * Graph writes (rename / create flow / delete flow / delete screen / restore).
    *
    * Every one is optimistic-then-reconcile like the drag path: dispatch the local edit,
@@ -355,6 +460,22 @@ export function AtlasProvider({
             )
           }
           return
+        case 'flowAction': {
+          const value = back ? edit.before : edit.after
+          dispatch({ type: 'flow/actionSet', id: edit.flowId, action: value })
+          runGraphWrite((pid, rev) =>
+            atlasRepo.updateFlow(pid, edit.flowId, { action: value }, { expectedRev: rev }),
+          )
+          return
+        }
+        case 'flowReconnect': {
+          const ends = back ? edit.before : edit.after
+          dispatch({ type: 'flow/reconnected', id: edit.flowId, from: ends.from, to: ends.to })
+          runGraphWrite((pid, rev) =>
+            atlasRepo.updateFlow(pid, edit.flowId, ends, { expectedRev: rev }),
+          )
+          return
+        }
         case 'screenDelete':
           if (back) {
             dispatch({ type: 'screen/restored', screen: edit.screen, flows: edit.flows })
@@ -426,49 +547,45 @@ export function AtlasProvider({
         persistPosition(id, position)
       },
 
-      dragGroup: (ids, delta) => {
-        const snap = stateRef.current.snapshot
-        if (!snap) return
-        for (const id of ids) {
-          const sc = snap.screens.find((s) => s.id === id)
-          if (!sc) continue
-          // Capture each board's pre-drag position exactly once, for undo/rollback.
-          if (!dragOrigin.current.has(id)) dragOrigin.current.set(id, { ...sc.position })
-          const next = { x: sc.position.x + delta.x, y: sc.position.y + delta.y }
-          dispatch({ type: 'screen/moved', id, position: next })
-          latestDrag.current.set(id, next)
-        }
+      dragGroup: moveGroupBy,
+      commitGroup,
+
+      /**
+       * Nudge the selection by a delta, coalescing a rapid run into ONE undo entry.
+       *
+       * Reuses the drag machinery: each key press moves locally (origin captured on the
+       * first), and a trailing debounce commits the whole run through `commitGroup`. Without
+       * the coalescing, holding ⌥→ for a second would push ~40 identical single-step edits
+       * and ⌘Z would crawl back one pixel at a time.
+       */
+      nudgeSelection: (ids, delta) => {
+        if (ids.length === 0) return
+        moveGroupBy(ids, delta)
+        if (nudgeTimer.current != null) clearTimeout(nudgeTimer.current)
+        nudgeTimer.current = window.setTimeout(() => {
+          nudgeTimer.current = null
+          commitGroup(ids)
+        }, 600)
       },
 
-      commitGroup: (ids) => {
+      alignSelection: (ids, edge) => {
         const snap = stateRef.current.snapshot
-        const activeProject = stateRef.current.projectId
-        if (!snap || !activeProject) return
-        const moves: { screenId: ScreenId; before: Vec; after: Vec }[] = []
-        const patches: { id: ScreenId; patch: { position: Vec } }[] = []
-        for (const id of ids) {
-          const before = dragOrigin.current.get(id)
-          const sc = snap.screens.find((s) => s.id === id)
-          if (!before || !sc) continue
-          if (before.x === sc.position.x && before.y === sc.position.y) continue
-          moves.push({ screenId: id, before, after: { ...sc.position } })
-          patches.push({ id, patch: { position: { ...sc.position } } })
-          dragOrigin.current.delete(id)
-          latestDrag.current.delete(id)
-        }
-        if (patches.length === 0) return
-        // One history entry for the whole group.
-        past.current.push({ kind: 'move', moves })
-        if (past.current.length > 100) past.current.shift()
-        future.current = []
-        setHistoryRev((n: number) => n + 1)
-        for (const p of patches) dispatch({ type: 'write/start', id: p.id })
-        atlasRepo
-          .updateScreens(activeProject, patches, { expectedRev: snap.rev })
-          .then(({ rev }) => {
-            for (const p of patches) dispatch({ type: 'write/ok', id: p.id, rev })
-          })
-          .catch((err) => handleWriteError(err, patches[0].id))
+        if (!snap) return
+        const items = ids
+          .map((id) => snap.screens.find((s) => s.id === id))
+          .filter((s): s is Screen => !!s)
+          .map((s) => ({ id: s.id, position: s.position }))
+        commitLayout(alignPositions(items, edge))
+      },
+
+      distributeSelection: (ids, axis) => {
+        const snap = stateRef.current.snapshot
+        if (!snap) return
+        const items = ids
+          .map((id) => snap.screens.find((s) => s.id === id))
+          .filter((s): s is Screen => !!s)
+          .map((s) => ({ id: s.id, position: s.position }))
+        commitLayout(distributePositions(items, axis))
       },
 
       renameScreen: (id, label) => {
@@ -504,7 +621,7 @@ export function AtlasProvider({
         }
       },
 
-      createFlow: (from, to, action) => {
+      createFlow: (from, to, onCreated) => {
         const snap = stateRef.current.snapshot
         if (!snap) return
         if (from === to) return
@@ -515,14 +632,50 @@ export function AtlasProvider({
         if (!fromLabel || !toLabel) return
         runGraphWrite((pid, rev) =>
           atlasRepo
+            // `label` stays "<From> to <To>" for the inspector heading; the *action* (what
+            // you tap) is authored afterward via `setFlowAction`, which is the one thing a
+            // drawn edge can't derive. The id is assigned by the repo, so the caller learns
+            // it via `onCreated` rather than guessing `flow-from-to` (which collisions break).
             .createFlow(pid, { from, to, label: `${fromLabel} to ${toLabel}` }, { expectedRev: rev })
             .then((res) => {
-              const flow = action ? { ...res.data, action } : res.data
-              dispatch({ type: 'flow/added', flow })
-              record({ kind: 'flowCreate', flow })
+              dispatch({ type: 'flow/added', flow: res.data })
+              record({ kind: 'flowCreate', flow: res.data })
+              onCreated?.(res.data)
               return res
             }),
         )
+      },
+
+      setFlowAction: (id, action) => {
+        const flow = stateRef.current.snapshot?.flows.find((f) => f.id === id)
+        if (!flow) return
+        const next = action.trim() || undefined
+        if (next === flow.action) return
+        record({ kind: 'flowAction', flowId: id, before: flow.action, after: next })
+        dispatch({ type: 'flow/actionSet', id, action: next })
+        runGraphWrite((pid, rev) => atlasRepo.updateFlow(pid, id, { action: next }, { expectedRev: rev }))
+      },
+
+      reconnectFlow: (id, patch) => {
+        const snap = stateRef.current.snapshot
+        const flow = snap?.flows.find((f) => f.id === id)
+        if (!snap || !flow) return
+        const from = patch.from ?? flow.from
+        const to = patch.to ?? flow.to
+        if (from === to) return
+        if (from === flow.from && to === flow.to) return
+        // Dropping onto a board already linked this way would duplicate an edge. The repo
+        // rejects it, but catch it here so a stray drop is a silent no-op rather than an
+        // error state — you just don't get a second identical connector.
+        if (snap.flows.some((f) => f.id !== id && f.from === from && f.to === to)) return
+        record({
+          kind: 'flowReconnect',
+          flowId: id,
+          before: { from: flow.from, to: flow.to },
+          after: { from, to },
+        })
+        dispatch({ type: 'flow/reconnected', id, from, to })
+        runGraphWrite((pid, rev) => atlasRepo.updateFlow(pid, id, { from, to }, { expectedRev: rev }))
       },
 
       deleteFlow: (id) => {
@@ -571,7 +724,18 @@ export function AtlasProvider({
 
       dismissError: () => dispatch({ type: 'error/dismiss' }),
     }),
-    [load, persistPosition, clearCommitTimer, applyEdit, record, runGraphWrite, handleWriteError],
+    [
+      load,
+      persistPosition,
+      clearCommitTimer,
+      applyEdit,
+      record,
+      runGraphWrite,
+      handleWriteError,
+      moveGroupBy,
+      commitGroup,
+      commitLayout,
+    ],
   )
 
   /**

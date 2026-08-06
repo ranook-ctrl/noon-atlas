@@ -3,7 +3,8 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { CanvasSection } from './CanvasSection'
 import { useCanvas } from './CanvasContext'
 import { Artboard } from '../components'
-import { CARD_W, frameBox } from './boardGeometry'
+import { CARD_W, connectorPath, frameBox, resolveAlign } from './boardGeometry'
+import type { AlignGuide } from './boardGeometry'
 import { GRID_UNIT } from './crossGrid'
 import { AtlasConnectors } from './AtlasConnectors'
 import type { FlowWeight } from './AtlasConnectors'
@@ -89,6 +90,14 @@ type AtlasBoardsProps = {
   selectedFlowId?: FlowId | null
   onSelectFlow?: (id: FlowId | null) => void
   onHoverFlow?: (id: FlowId | null, at?: { x: number; y: number }) => void
+  /**
+   * Draw-flow tool active. Boards stop dragging and instead become flow sources: a
+   * pointer-down starts a rubber-band, and releasing over another board creates the edge.
+   */
+  drawFlowMode?: boolean
+  onCreateFlow?: (from: ScreenId, to: ScreenId) => void
+  /** Re-point one end of an existing flow (dragging a selected edge's handle). */
+  onReconnectFlow?: (id: FlowId, patch: { from?: ScreenId; to?: ScreenId }) => void
 }
 
 export function AtlasBoards({
@@ -114,9 +123,33 @@ export function AtlasBoards({
   selectedFlowId = null,
   onSelectFlow,
   onHoverFlow,
+  drawFlowMode = false,
+  onCreateFlow,
+  onReconnectFlow,
 }: AtlasBoardsProps) {
-  const { focusRect, screenToWorld } = useCanvas()
+  const { focusRect, screenToWorld, getScale } = useCanvas()
   const [hoveredFlowId, setHoveredFlowId] = useState<FlowId | null>(null)
+  /** Live alignment guides while a single board drags. Cleared on drag end. */
+  const [guides, setGuides] = useState<AlignGuide[]>([])
+  /**
+   * Live rubber-band gesture — draw OR reconnect.
+   *
+   * `anchorId` is the fixed end (source for a fresh draw; the untouched end for a
+   * reconnect). `end` says which end is moving, so the preview curve keeps the right
+   * direction when the *source* handle is the one being dragged. `flowId` is set only when
+   * reconnecting an existing edge.
+   */
+  type Draft = {
+    kind: 'create' | 'reconnect'
+    anchorId: ScreenId
+    end: 'from' | 'to'
+    cursor: Vec
+    overId: ScreenId | null
+    flowId?: FlowId
+  }
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const draftRef = useRef(draft)
+  draftRef.current = draft
   /** Live rubber-band rect in world coords while dragging on empty canvas. */
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
 
@@ -165,9 +198,16 @@ export function AtlasBoards({
    * hijacked it would make boards unmovable.
    */
   const onMarqueeDown = (e: ReactPointerEvent) => {
-    if (e.button !== 0 || !onSelectionChange) return
+    if (e.button !== 0) return
     // Only the world layer itself, never a descendant (i.e. never a board).
     if (e.target !== e.currentTarget) return
+    // A click on empty plane while an edge is armed cancels it, rather than starting a
+    // marquee that the draw-flow mode has no use for.
+    if (draftRef.current) {
+      cancelDraft()
+      return
+    }
+    if (!onSelectionChange) return
     const host = (e.currentTarget as HTMLElement).closest('.atlas-canvas') as HTMLElement | null
     if (!host) return
     const rect = host.getBoundingClientRect()
@@ -214,6 +254,116 @@ export function AtlasBoards({
     window.addEventListener('pointerup', up)
   }
 
+  /** Tear down the in-progress draw-flow gesture: cursor tracker, key listener, state. */
+  const draftCleanup = useRef<(() => void) | null>(null)
+  const cancelDraft = () => {
+    draftCleanup.current?.()
+    draftCleanup.current = null
+    setDraft(null)
+  }
+
+  /**
+   * Draw-flow, as click-to-arm rather than press-drag.
+   *
+   * A press-drag needs you to hold the button and move before anything appears, so the
+   * connector was invisible until you'd already committed to a direction. Now the first
+   * click *arms* a source: the rubber-band shows at once and follows the bare cursor, and a
+   * second click on another board commits. Clicking the source again, clicking empty plane,
+   * or Escape cancels.
+   *
+   * The preview curve uses the real `connectorPath`, so it docks into the same socket and
+   * carries the same trunk the committed edge will — what you preview is what you get.
+   */
+  /** Begin a draft (create or reconnect) and start tracking the bare cursor + Escape. */
+  const beginDraft = (init: Draft, e: ReactPointerEvent) => {
+    const host = (e.currentTarget as HTMLElement).closest('.atlas-canvas') as HTMLElement | null
+    if (!host) return
+    const rect = host.getBoundingClientRect()
+    const toWorld = (cx: number, cy: number) => screenToWorld(cx - rect.left, cy - rect.top)
+    const hitBoard = (c: Vec): ScreenId | null => {
+      for (const sc of screens) {
+        if (sc.id === init.anchorId) continue
+        const fb = frameBox(sc.position)
+        if (c.x >= fb.x && c.x <= fb.x + fb.w && c.y >= fb.y && c.y <= fb.y + fb.h) return sc.id
+      }
+      return null
+    }
+    const first = toWorld(e.clientX, e.clientY)
+    setDraft({ ...init, cursor: first, overId: hitBoard(first) })
+    const move = (ev: PointerEvent) => {
+      const c = toWorld(ev.clientX, ev.clientY)
+      setDraft({ ...init, cursor: c, overId: hitBoard(c) })
+    }
+    const key = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') cancelDraft()
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('keydown', key)
+    draftCleanup.current = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('keydown', key)
+    }
+  }
+
+  /**
+   * A board was clicked in draw-flow mode. First click arms it as the source; a later click
+   * on a *different* board commits the edge. Either way the gesture then resets.
+   */
+  const onFlowClick = (id: ScreenId, e: ReactPointerEvent) => {
+    const d = draftRef.current
+    if (!d) {
+      beginDraft({ kind: 'create', anchorId: id, end: 'to', cursor: { x: 0, y: 0 }, overId: null }, e)
+      return
+    }
+    if (id !== d.anchorId) commitDraft(id)
+    cancelDraft()
+  }
+
+  /**
+   * Grab a selected edge's endpoint handle and drag it to another board to re-point it.
+   * Press-drag here (not click-to-arm): you're already pressing on the handle, and the
+   * commit is on release over a board.
+   */
+  const startReconnect = (flowId: FlowId, end: 'from' | 'to', anchorId: ScreenId, e: ReactPointerEvent) => {
+    e.stopPropagation()
+    beginDraft({ kind: 'reconnect', flowId, end, anchorId, cursor: { x: 0, y: 0 }, overId: null }, e)
+    const up = () => {
+      window.removeEventListener('pointerup', up)
+      const d = draftRef.current
+      if (d && d.overId && d.overId !== d.anchorId) commitDraft(d.overId)
+      cancelDraft()
+    }
+    window.addEventListener('pointerup', up)
+  }
+
+  /** Commit the current draft onto `targetId` — create a new edge or re-point an existing one. */
+  const commitDraft = (targetId: ScreenId) => {
+    const d = draftRef.current
+    if (!d) return
+    if (d.kind === 'create') {
+      onCreateFlow?.(d.anchorId, targetId)
+    } else if (d.flowId) {
+      // The moving end becomes `targetId`; the anchor stays put.
+      onReconnectFlow?.(d.flowId, d.end === 'from' ? { from: targetId } : { to: targetId })
+    }
+  }
+
+  /**
+   * Single-board drag, with smart-alignment snapping.
+   *
+   * Wraps the raw `onScreenDrag`: snaps the dragged frame's edges/centres to neighbours
+   * within ~6 screen px (converted to world by the live zoom, so it feels constant), draws
+   * a guide per snapped axis, and forwards the adjusted position. Only for a lone board —
+   * aligning a whole group to one neighbour is ambiguous, so a group drag skips this and
+   * clears any guides.
+   */
+  const dragWithGuides = (id: ScreenId, pos: Vec) => {
+    const others = screens.filter((s) => s.id !== id)
+    const { position, guides: g } = resolveAlign(pos, others, 6 / getScale())
+    setGuides(g)
+    onScreenDrag(id, position)
+  }
+
   return (
     <>
       {/* Full-plane hit layer for the marquee. Sits behind everything and only reacts
@@ -228,6 +378,60 @@ export function AtlasBoards({
           aria-hidden
           style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
         />
+      )}
+
+      {/* Draw-flow preview. A separate SVG from AtlasConnectors so the ~60/s cursor
+          updates don't re-render all the committed edges. Positioned at world origin like
+          the connector layer, so path coords are world coords. */}
+      {draft && (() => {
+        const anchor = byId.get(draft.anchorId)
+        if (!anchor) return null
+        const over = draft.overId ? byId.get(draft.overId) : null
+        // Snap to the target's real frame when hovering one; otherwise a point at the cursor.
+        const movingBox = over
+          ? frameBox(over.position)
+          : { x: draft.cursor.x - 1, y: draft.cursor.y - 1, w: 2, h: 2 }
+        const anchorBox = frameBox(anchor.position)
+        // Keep the arrow pointing the true direction: if the *source* handle is moving,
+        // the drawn edge runs movingBox → anchor; otherwise anchor → movingBox.
+        const geo =
+          draft.end === 'from'
+            ? connectorPath(movingBox, anchorBox)
+            : connectorPath(anchorBox, movingBox)
+        return (
+          <svg
+            className="atlas-draft"
+            style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none' }}
+            aria-hidden
+          >
+            <path
+              d={geo.d}
+              fill="none"
+              stroke="#F7306F"
+              strokeWidth={2}
+              strokeDasharray="6 5"
+              className={over ? 'atlas-draft__line is-target' : 'atlas-draft__line'}
+            />
+          </svg>
+        )
+      })()}
+
+      {/* Smart-alignment guides while dragging. World-space, so the coords are world
+          coords; screen-constant thickness comes from dividing by zoom. */}
+      {guides.length > 0 && (
+        <svg
+          className="atlas-guides"
+          style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none' }}
+          aria-hidden
+        >
+          {guides.map((g, i) =>
+            g.axis === 'x' ? (
+              <line key={i} x1={g.at} y1={g.from} x2={g.at} y2={g.to} className="atlas-guide" strokeWidth={1 / getScale()} />
+            ) : (
+              <line key={i} x1={g.from} y1={g.at} x2={g.to} y2={g.at} className="atlas-guide" strokeWidth={1 / getScale()} />
+            ),
+          )}
+        </svg>
       )}
 
       <AtlasConnectors
@@ -271,13 +475,62 @@ export function AtlasBoards({
            */
           onSelect={onSelect}
           onRenameRequest={onRenameRequest}
+          drawFlowMode={drawFlowMode}
+          onFlowClick={onFlowClick}
+          isFlowSource={draft?.anchorId === screen.id}
+          isFlowTarget={draft?.overId === screen.id}
           onGroupDrag={onGroupDrag}
           onGroupDragEnd={onGroupDragEnd}
           onDragStart={onScreenDragStart}
-          onDrag={onScreenDrag}
-          onDragEnd={onScreenDragEnd}
+          onDrag={dragWithGuides}
+          onDragEnd={(sid, p) => {
+            // Commit the *snapped* position, or the board would jump back to the raw drop
+            // point on release — the guide would have been a lie.
+            const { position } = resolveAlign(
+              p,
+              screens.filter((s) => s.id !== sid),
+              6 / getScale(),
+            )
+            setGuides([])
+            onScreenDragEnd(sid, position)
+          }}
         />
       ))}
+
+      {/* Reconnect handles — grabbable dots on the selected edge's two ends. Rendered LAST
+          so they sit above the boards and the connector hit-paths; otherwise a click on a
+          handle would land on the connector underneath and just re-select the edge. Sized
+          in world units ÷ zoom so they stay a constant on-screen dot. */}
+      {!draft && selectedFlowId && onReconnectFlow && (() => {
+        const flow = flows.find((f) => f.id === selectedFlowId)
+        const from = flow && byId.get(flow.from)
+        const to = flow && byId.get(flow.to)
+        if (!flow || !from || !to) return null
+        const geo = connectorPath(frameBox(from.position), frameBox(to.position))
+        const rad = 5 / getScale()
+        return (
+          <svg
+            className="atlas-reconnect"
+            style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}
+            aria-hidden
+          >
+            <circle
+              className="atlas-reconnect-handle"
+              cx={geo.portFrom.pad.x}
+              cy={geo.portFrom.pad.y}
+              r={rad}
+              onPointerDown={(e) => startReconnect(flow.id, 'from', flow.to, e)}
+            />
+            <circle
+              className="atlas-reconnect-handle"
+              cx={geo.portTo.pad.x}
+              cy={geo.portTo.pad.y}
+              r={rad}
+              onPointerDown={(e) => startReconnect(flow.id, 'to', flow.from, e)}
+            />
+          </svg>
+        )
+      })()}
     </>
   )
 }
@@ -296,6 +549,12 @@ type DraggableBoardProps = {
   groupSize?: number
   onSelect?: (id: ScreenId, additive: boolean) => void
   onRenameRequest?: (id: ScreenId) => void
+  /** Draw-flow tool: a click arms this board as a source, or commits an armed edge to it. */
+  drawFlowMode?: boolean
+  onFlowClick?: (id: ScreenId, e: ReactPointerEvent) => void
+  /** This board is the source / current target of an in-progress draw-flow gesture. */
+  isFlowSource?: boolean
+  isFlowTarget?: boolean
   onGroupDrag?: (delta: Vec) => void
   onGroupDragEnd?: () => void
   onDragStart?: (id: ScreenId) => void
@@ -322,6 +581,10 @@ const DraggableBoard = memo(function DraggableBoard({
   groupSize = 0,
   onSelect,
   onRenameRequest,
+  drawFlowMode = false,
+  onFlowClick,
+  isFlowSource = false,
+  isFlowTarget = false,
   onGroupDrag,
   onGroupDragEnd,
   onDragStart,
@@ -346,6 +609,13 @@ const DraggableBoard = memo(function DraggableBoard({
 
   const onPointerDown = (e: ReactPointerEvent) => {
     if (e.button !== 0) return
+    // Draw-flow tool: a click arms this board as a source (or commits an armed edge to
+    // it). Not a drag — the parent tracks the bare cursor so the line shows immediately.
+    if (drawFlowMode && onFlowClick) {
+      e.stopPropagation()
+      onFlowClick(id, e)
+      return
+    }
     // Pan tool: don't consume the event, so the canvas handles it as a pan. Deliberately
     // gives up tap-to-focus while panning, which is how every canvas tool behaves.
     if (!draggable) return
@@ -410,7 +680,7 @@ const DraggableBoard = memo(function DraggableBoard({
   return (
     <CanvasSection x={pos.x} y={pos.y} width={CARD_W}>
       <div
-        className={`atlas-board${dragging ? ' is-dragging' : ''}${dimmed ? ' is-dimmed' : ''}${draggable ? '' : ' is-pan-mode'}${selected ? ' is-selected' : ''}`}
+        className={`atlas-board${dragging ? ' is-dragging' : ''}${dimmed ? ' is-dimmed' : ''}${draggable ? '' : ' is-pan-mode'}${selected ? ' is-selected' : ''}${drawFlowMode ? ' is-flow-mode' : ''}${isFlowSource ? ' is-flow-source' : ''}${isFlowTarget ? ' is-flow-target' : ''}`}
         onPointerDown={onPointerDown}
         /* Double-click renames. The editor itself lives in the 1:1 chrome panel, not on
            the board — see `ScreenTitle`. */
@@ -425,7 +695,7 @@ const DraggableBoard = memo(function DraggableBoard({
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
       >
-        <Artboard src={src} label={label} focused={focused} hovered={hovered} width={CARD_W} />
+        <Artboard src={src} label={label} focused={focused} hovered={hovered} selected={selected} width={CARD_W} />
       </div>
     </CanvasSection>
   )

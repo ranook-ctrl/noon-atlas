@@ -443,16 +443,24 @@ export function RightNav({
             width={CONTENT_W}
           />
 
-          {/* Tab strip (Figma 54:80782). Previously a hand-rolled duplicate of
-              SegmentedControl whose last two tabs were inert.
+          {/* Artboard preview, FIRST — you look at the screen, then read its numbers.
+              Compact (a scroll window into the full-length capture, not the whole 572px)
+              so the tabs and headline stats still land in the same fold below it. An
+              earlier pass had put this last to surface the stats; the ask is both on one
+              panel, which a shorter preview gives without reordering. It's also the only
+              surface where a screen's sections are hoverable — that drives the
+              section-level stats card. */}
+          <MasterImage
+            width={CONTENT_W}
+            height={300}
+            src={src}
+            alt={title}
+            sections={sections}
+            onHoverSection={onHoverSection}
+          />
 
-              Deliberately ABOVE the artboard preview. The preview is 572px tall, so
-              with it first every number in the panel started below the fold: clicking a
-              screen to read its stats opened a panel showing no stats, and you had to
-              scroll past a picture to reach the thing you asked for. The preview is also
-              the *least* urgent item here — the canvas is already showing the same
-              artboard, larger, a few hundred pixels to the left — so it now sits under
-              the numbers rather than in front of them. */}
+          {/* Tab strip (Figma 54:80782). Previously a hand-rolled duplicate of
+              SegmentedControl whose last two tabs were inert. */}
           <SegmentedControl
             width={CONTENT_W}
             height={36}
@@ -493,19 +501,6 @@ export function RightNav({
               />
             )}
           </div>
-
-          {/* Artboard preview, below the numbers.
-              Kept rather than dropped despite the canvas showing the same screen: this is
-              the only surface where a screen's sections are hoverable, which is what
-              drives the section-level stats card. */}
-          <MasterImage
-            width={264}
-            height={572}
-            src={src}
-            alt={title}
-            sections={sections}
-            onHoverSection={onHoverSection}
-          />
         </div>
       </div>
     </div>

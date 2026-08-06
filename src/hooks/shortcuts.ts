@@ -26,6 +26,10 @@ export type ShortcutId =
   | 'toggleMinimap'
   | 'toggleSnap'
   | 'deleteSelection'
+  | 'nudgeLeft'
+  | 'nudgeRight'
+  | 'nudgeUp'
+  | 'nudgeDown'
   | 'modeMap'
   | 'modeScreens'
   | 'fitAll'
@@ -84,6 +88,13 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'toggleSnap', combos: ['g'], keys: ['G'], group: 'Edit', description: 'Snap to grid' },
   // Both, because macOS keyboards label the key ⌫ while full keyboards send 'delete'.
   { id: 'deleteSelection', combos: ['backspace', 'delete'], keys: ['⌫'], group: 'Edit', description: 'Delete the selection' },
+  // Nudge: ⌥+arrows move the selection by one grid unit; ⌥⇧ by ten. Two combos per
+  // direction, one handler — the handler reads Shift for the magnitude. Plain arrows stay
+  // as the graph walk; the modifier is what distinguishes "move a board" from "walk the graph".
+  { id: 'nudgeLeft', combos: ['alt+arrowleft', 'alt+shift+arrowleft'], keys: ['⌥', '←'], group: 'Edit', description: 'Nudge selection (⇧ ×10)' },
+  { id: 'nudgeRight', combos: ['alt+arrowright', 'alt+shift+arrowright'], group: 'Edit', description: 'Nudge selection right' },
+  { id: 'nudgeUp', combos: ['alt+arrowup', 'alt+shift+arrowup'], group: 'Edit', description: 'Nudge selection up' },
+  { id: 'nudgeDown', combos: ['alt+arrowdown', 'alt+shift+arrowdown'], group: 'Edit', description: 'Nudge selection down' },
 
   // ── Canvas ────────────────────────────────────────────────────────────────
   { id: 'toolSelect', combos: ['v'], keys: ['V'], group: 'Canvas', description: 'Select tool' },

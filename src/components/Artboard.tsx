@@ -21,6 +21,14 @@ type ArtboardProps = {
    * mistaken for "selected".
    */
   hovered?: boolean
+  /**
+   * In the multi-selection (the edit target). Gets a solid pink ring, distinct from the
+   * focused board's translucent one. Drawn here, in world units, rather than as a fixed
+   * CSS `box-shadow` on `.is-selected` — a fixed 1.5px lives inside the zoom-scaled world
+   * layer, so it shrank to sub-pixel when zoomed out and multi-select looked like nothing
+   * happened except on the one focused board.
+   */
+  selected?: boolean
   /** Card width in world px — every other dimension scales from this. */
   width?: number
 }
@@ -32,6 +40,7 @@ const RING = 8.333 / 200 // in-focus highlight ring thickness
 const GAP = 16 / 200 // label → frame gap
 const LABEL = 16 / 200 // label font size
 const FOCUS_PINK = 'rgba(247, 48, 111, 0.4)'
+const SELECT_PINK = 'rgba(247, 48, 111, 0.95)' // solid — the edit target, louder than focus
 const HOVER_RING = 'rgba(255, 255, 255, 0.14)'
 
 /**
@@ -43,13 +52,18 @@ export function Artboard({
   label,
   focused = false,
   hovered = false,
+  selected = false,
   width = 200,
 }: ArtboardProps) {
-  const ring = focused
-    ? `0 0 0 ${width * RING}px ${FOCUS_PINK}`
-    : hovered
-      ? `0 0 0 ${Math.max(1, width * 0.005)}px ${HOVER_RING}`
-      : 'none'
+  // Priority: a selected board shows the solid edit-target ring even when it's also the
+  // focused (last-added) one, so a multi-selection reads as a set rather than one board.
+  const ring = selected
+    ? `0 0 0 ${width * RING * 0.7}px ${SELECT_PINK}`
+    : focused
+      ? `0 0 0 ${width * RING}px ${FOCUS_PINK}`
+      : hovered
+        ? `0 0 0 ${Math.max(1, width * 0.005)}px ${HOVER_RING}`
+        : 'none'
 
   return (
     <div style={{ width, display: 'flex', flexDirection: 'column', gap: width * GAP }}>

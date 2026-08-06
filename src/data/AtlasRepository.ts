@@ -46,7 +46,15 @@ export type NewScreen = {
   device?: Screen['device']
 }
 
-export type NewFlow = { from: ScreenId; to: ScreenId; label?: string }
+export type NewFlow = { from: ScreenId; to: ScreenId; label?: string; action?: string }
+
+/**
+ * The editable fields of a flow after creation: its affordance (`action`) and its
+ * endpoints (`from`/`to`, changed by dragging a connector's handle to another board).
+ * The id is deliberately NOT derived from the endpoints on edit — keeping it stable is
+ * what lets undo restore a reconnected edge to exactly what it was.
+ */
+export type FlowPatch = Partial<Pick<Flow, 'action' | 'from' | 'to'>>
 
 export interface ReadOpts {
   signal?: AbortSignal
@@ -124,6 +132,13 @@ export interface AtlasRepository {
 
   // ── Flows ─────────────────────────────────────────────────────────────────
   createFlow(projectId: ProjectId, input: NewFlow, opts?: WriteOpts): Promise<WriteResult<Flow>>
+  /** Edit a flow's affordance label (its `action`). The only mutable field a flow has. */
+  updateFlow(
+    projectId: ProjectId,
+    id: FlowId,
+    patch: FlowPatch,
+    opts?: WriteOpts,
+  ): Promise<WriteResult<Flow>>
   deleteFlow(projectId: ProjectId, id: FlowId, opts?: WriteOpts): Promise<WriteResult<void>>
   /** Inverse of `deleteFlow`: keeps the original id and clears the seed tombstone. */
   restoreFlow(projectId: ProjectId, flow: Flow, opts?: WriteOpts): Promise<WriteResult<Flow>>

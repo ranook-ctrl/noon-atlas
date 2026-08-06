@@ -2699,9 +2699,9 @@ kbd {
   opacity: 1;
 }
 
-.atlas-board.is-selected .atlas-board__frame {
-  box-shadow: 0 0 0 1.5px var(--noon-pink);
-}
+/* The selection ring is drawn by `Artboard` in world units so it scales with zoom (a
+   fixed CSS box-shadow here shrank to sub-pixel when zoomed out, which is why a
+   multi-selection looked like only the focused board was picked). Nothing to add. */
 
 /* ══════════════════════════════════════════════════════════════════════════════
    Edge hover card — the full stat set for a connector
@@ -2970,4 +2970,125 @@ kbd {
   border-bottom: 1px solid var(--noon-pink);
   outline: none;
   caret-color: var(--noon-pink);
+}
+
+/* ── Draw-flow ─────────────────────────────────────────────────────────────── */
+/* The rubber-band preview while drawing an edge. Dashed pink so it reads as
+   provisional; solid-weight and brighter once it's over a valid target. */
+.atlas-draft__line {
+  opacity: 0.7;
+}
+.atlas-draft__line.is-target {
+  opacity: 1;
+  stroke-dasharray: none;
+}
+
+/* In draw-flow mode every board is a flow source — a crosshair says "click to start". */
+.atlas-board.is-flow-mode {
+  cursor: crosshair;
+}
+/* Hover preview: a faint ring on any board you point at, so before you click you can see
+   it's a valid node to start (or finish) an edge from. */
+.atlas-board.is-flow-mode:hover .atlas-board__frame {
+  outline: 1px solid var(--noon-pink-40);
+  outline-offset: 2px;
+}
+/* Armed source and the board under the cursor both get the full pink ring, so the two
+   ends of the live gesture read louder than the hover preview. */
+.atlas-board.is-flow-source .atlas-board__frame,
+.atlas-board.is-flow-target .atlas-board__frame {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: 2px;
+}
+
+/* ── Edge inspector: editable Trigger ──────────────────────────────────────── */
+.edge-inspector__trigger--button {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+.edge-inspector__trigger--button:disabled {
+  cursor: default;
+}
+.edge-inspector__trigger-value.is-empty {
+  color: var(--text-4);
+}
+.edge-inspector__trigger-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin-left: 12px;
+  padding: 2px 0;
+  font-size: 12px;
+  text-align: right;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--noon-pink);
+  outline: none;
+  caret-color: var(--noon-pink);
+}
+.edge-inspector__trigger-input::placeholder {
+  color: var(--text-4);
+}
+
+/* ── Multi-select: arrange controls ────────────────────────────────────────── */
+.multisel__arrange {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline-2);
+}
+.multisel__arrange-label {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-4);
+}
+.multisel__arrange-row {
+  display: flex;
+  gap: 6px;
+}
+.multisel__arrange-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-h);
+  flex: 1 1 0;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.multisel__arrange-btn.is-wide {
+  font-size: 11px;
+}
+.multisel__arrange-btn:hover:not(:disabled) {
+  color: var(--text-1);
+}
+.multisel__arrange-btn:disabled {
+  color: var(--text-4);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Smart-alignment guides ────────────────────────────────────────────────── */
+/* Drawn while a single board drags, when its edge/centre lines up with a neighbour's.
+   Pink and crisp so it reads as "you're aligned here", gone the instant you release. */
+.atlas-guide {
+  stroke: var(--noon-pink);
+  opacity: 0.85;
+  shape-rendering: crispEdges;
+}
+
+/* ── Reconnect handles ─────────────────────────────────────────────────────── */
+/* Grabbable dots on a selected edge's two ends. Drag one to another board to re-point
+   that end. Pink fill, white hairline, so they read as live handles rather than sockets. */
+.atlas-reconnect-handle {
+  fill: var(--noon-pink);
+  stroke: #fff;
+  stroke-width: 1;
+  cursor: grab;
+  pointer-events: auto;
+}
+.atlas-reconnect-handle:active {
+  cursor: grabbing;
 }

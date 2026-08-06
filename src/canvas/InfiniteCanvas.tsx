@@ -6,7 +6,7 @@ import type { Viewport } from './useViewport'
 import { CanvasContext, CanvasScaleContext } from './CanvasContext'
 import type { CanvasApi } from './CanvasContext'
 import { ZoomHud } from './ZoomHud'
-import type { Box } from '../domain/types'
+import type { Box, Vec } from '../domain/types'
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
 
@@ -98,6 +98,23 @@ export function InfiniteCanvas({
     [animateTo, ref],
   )
 
+  /** Centre a world point, holding the current zoom. Powers the minimap drag-lens. */
+  const panTo = useCallback(
+    (world: Vec, opts?: { animate?: boolean }) => {
+      const el = ref.current
+      if (!el) return
+      const vw = el.clientWidth
+      const vh = el.clientHeight
+      if (vw === 0 || vh === 0) return
+      const scale = vpRef.current.scale
+      const target = { x: vw / 2 - world.x * scale, y: vh / 2 - world.y * scale, scale }
+      // Instant while dragging (1:1 with the cursor); eased for a click-to-jump.
+      if (opts?.animate === false) jumpTo(target)
+      else animateTo(target)
+    },
+    [animateTo, jumpTo, ref],
+  )
+
   /** Fit a rect fully inside the viewport — powers fit-to-content. */
   const fitRect = useCallback(
     (rect: Box, padding = 80) => {
@@ -182,13 +199,14 @@ export function InfiniteCanvas({
       getScale: () => vpRef.current.scale,
       getViewport: () => vpRef.current,
       screenToWorld: (sx, sy) => screenToWorld(vpRef.current, sx, sy),
+      panTo,
       focusRect,
       fitRect,
       zoomBy,
       zoomTo,
       fitContent,
     }),
-    [focusRect, fitRect, zoomBy, zoomTo, fitContent],
+    [panTo, focusRect, fitRect, zoomBy, zoomTo, fitContent],
   )
 
   // Publish the camera to the page. Cleared on unmount so a stale camera from a
