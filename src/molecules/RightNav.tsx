@@ -12,6 +12,11 @@ import type { Device, ScreenId, Section } from '../domain/types'
 const CONTENT_W = 299
 /** left preview column width — a tall portrait window onto the artboard */
 const PREVIEW_W = 240
+/** preview height: the 400×865 artboard rendered at 240 wide is ~519 tall. Viewport-
+    relative (not a `%`, which has no definite parent to resolve against now the panel
+    hugs its content) so it caps at 519 on a normal desktop but shrinks on a short
+    viewport rather than overflowing the card. 122 = top 62 + bottom 20 + card padding 40. */
+const PREVIEW_H = 'min(519px, calc(100vh - 122px))'
 
 const PINK = '#F7306F'
 
@@ -366,7 +371,7 @@ export function RightNav({
       <div className="rightnav__preview">
         <MasterImage
           width={PREVIEW_W}
-          height="100%"
+          height={PREVIEW_H}
           src={src}
           alt={title}
           sections={sections}

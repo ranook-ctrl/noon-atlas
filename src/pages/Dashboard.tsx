@@ -69,6 +69,15 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
  */
 const SECTION_CARD_INSET = 375
 
+/**
+ * Below this zoom the details panel slides away and the screen reads as deselected;
+ * above it the panel returns. A focused screen sits at ~1.25× (see `focusRect`), and
+ * fit-all lands near 0.13×, so 0.5 is comfortably between "looking at one screen" and
+ * "looking at the whole map" — you have to actively zoom out of a screen to dismiss it.
+ * The panel's 500ms `right` transition makes the show/hide a slide rather than a cut.
+ */
+const PANEL_MIN_ZOOM = 0.5
+
 /** Tracks the live viewport size (updates on resize). */
 function useViewportSize() {
   const [size, setSize] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
@@ -479,6 +488,15 @@ export default function Dashboard() {
     () => snapshot?.screens.find((s) => s.id === focusedId) ?? snapshot?.screens[0] ?? null,
     [snapshot, focusedId],
   )
+
+  /**
+   * Panel visibility splits from panel *intent*. `rightNavOpen` is the intent — set when
+   * you focus a screen, cleared by the close button — and it drives the camera inset so a
+   * focused screen always lands left of where the panel will be. `panelVisible` gates the
+   * actual slide-in on live zoom: zoom out past the threshold and the panel leaves (the
+   * screen reads as deselected); zoom back in and it returns, because the intent persisted.
+   */
+  const panelVisible = rightNavOpen && zoom >= PANEL_MIN_ZOOM
 
   const crumbs = useMemo(() => {
     if (!graph || !snapshot || !focused) return []
@@ -1007,7 +1025,7 @@ export default function Dashboard() {
             precedence over the focused screen, because clicking an edge is a more
             specific intent than having a screen focused. */}
         {mode === 'map' && focused && (
-          <div className={`dashboard__widget dashboard__right-nav${rightNavOpen ? ' is-open' : ''}`}>
+          <div className={`dashboard__widget dashboard__right-nav${panelVisible ? ' is-open' : ''}`}>
             <PanelSwap
               swapKey={
                 selectedScreens.length > 1

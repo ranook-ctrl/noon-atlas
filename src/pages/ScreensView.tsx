@@ -4,6 +4,7 @@ import { ScreenPlate } from '../components/ScreenPlate'
 import { Button } from '../components/Button'
 import { SegmentedControl } from '../molecules'
 import { CategoryTree, type TreeSelection } from '../molecules/CategoryTree'
+import { MaskIcon } from '../components/MaskIcon'
 import { JourneyStrip } from '../molecules/JourneyStrip'
 import type { AtlasSnapshot, FlowGraph, MetricScope, MetricSet, ScreenId } from '../domain'
 import { buildCategoryTree, findJourney, formatMetric, screensInCategory } from '../domain'
@@ -70,7 +71,10 @@ export function ScreensView({
   /** Open a screen on the Map — the browser is a way in, not a dead end. */
   onOpenScreen: (id: ScreenId) => void
 }) {
-  const [tab, setTab] = useState<Tab>('Screens')
+  // Flows on arrival: the browser's headline is the named journeys through the app, and
+  // the taxonomy rail is organised around them; landing on the flat screen grid buries
+  // that. The Screens tab is one click away for anyone who wants the raw list.
+  const [tab, setTab] = useState<Tab>('Flows')
   const [sort, setSort] = useState<SortKey>('flow')
   const [query, setQuery] = useState('')
   const [selection, setSelection] = useState<TreeSelection>({ kind: 'all' })
@@ -199,14 +203,40 @@ export function ScreensView({
   return (
     <div className="browser">
       <aside className="browser__rail">
-        <input
-          className="pixel browser__search"
-          type="search"
-          placeholder="Search…"
-          aria-label="Search screens"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        {/* A search *section*, not a lone input: a labelled field with a magnifier and an
+            inline clear affordance, so it reads as the way to filter the browser rather
+            than an anonymous text box at the top of the rail. */}
+        <div className="browser__search-field">
+          <svg
+            className="browser__search-icon"
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle cx="6" cy="6" r="4.25" stroke="currentColor" strokeWidth="1.4" />
+            <line x1="9.4" y1="9.4" x2="12.5" y2="12.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+          <input
+            className="pixel browser__search"
+            type="search"
+            placeholder={tab === 'Screens' ? 'Search screens…' : 'Search flows…'}
+            aria-label="Search the browser"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button
+              type="button"
+              className="browser__search-clear"
+              aria-label="Clear search"
+              onClick={() => setQuery('')}
+            >
+              <MaskIcon src="/icons/close.svg" width={9} height={9} color="currentColor" />
+            </button>
+          )}
+        </div>
         <CategoryTree
           tree={tree}
           allCount={tab === 'Screens' ? snapshot.screens.length : snapshot.journeys.length}
