@@ -2843,15 +2843,14 @@ kbd {
 .edge-card {
   position: fixed;
   z-index: 260;
-  min-width: 208px;
-  padding: 10px 12px;
+  min-width: 240px;
+  padding: 16px 14px;
   box-sizing: border-box;
   pointer-events: none;
-  background: var(--tool-fill);
-  border: 1px solid var(--tool-border);
-  border-radius: var(--tool-radius);
-  backdrop-filter: blur(var(--tool-blur));
-  -webkit-backdrop-filter: blur(var(--tool-blur));
+  /* Opaque solid card, not glass — matches the stats panel design. */
+  background: rgba(20, 20, 28, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
   animation: pane-in 140ms var(--ease-out) both;
 }
 
@@ -2879,24 +2878,34 @@ kbd {
 }
 
 .edge-card__row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 2px 0;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.edge-card__indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 
 .edge-card__label {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 17px;
-  color: var(--text-4);
+  color: rgba(255, 255, 255, 0.7);
+  min-width: 0;
 }
 
 .edge-card__value {
   font-size: 12px;
   line-height: 17px;
-  color: var(--text-2);
+  color: #fff;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  flex-shrink: 0;
 }
 
 .edge-card__row[data-lead='true'] .edge-card__value {

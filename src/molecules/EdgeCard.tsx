@@ -11,6 +11,16 @@ const ORDER = [
   'atc_gmv_per_day',
 ]
 
+/** Color-code stats by category: teal/green for traffic, orange for monetization. */
+const COLOR_BY_KEY: Record<string, string> = {
+  flow_users: 'var(--noon-teal, #00d9a3)',
+  flow_share: 'var(--noon-teal, #00d9a3)',
+  flow_drop_off: 'var(--noon-orange, #ff9f00)',
+  flow_conversion: 'var(--noon-orange, #ff9f00)',
+  atc_gmv_per_user: 'var(--noon-orange, #ff9f00)',
+  atc_gmv_per_day: 'var(--noon-orange, #ff9f00)',
+}
+
 /**
  * The full stat set for a connector, shown on hover.
  *
@@ -68,8 +78,10 @@ export function EdgeCard({
         rows.map((m) => {
           const bad = m.key === 'flow_drop_off' && m.value >= 55
           const lead = m.key === 'flow_users'
+          const color = COLOR_BY_KEY[m.key] || 'var(--text-4)'
           return (
             <div className="edge-card__row" key={m.key} data-bad={bad} data-lead={lead}>
+              <div className="edge-card__indicator" style={{ backgroundColor: color }} />
               <span className="edge-card__label pixel-line">{m.label}</span>
               <span className="edge-card__value pixel">
                 {formatMetric(m)}
