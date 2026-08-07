@@ -49,6 +49,13 @@ interface InfiniteCanvasProps {
    * going Map → Screens → Map puts you exactly where you left off.
    */
   hidden?: boolean
+  /**
+   * Screen-px width reserved on the right for the details panel. `focusRect` centres a
+   * focused screen in the region *left* of it rather than the full viewport, so opening
+   * a screen places it in the free space beside the panel instead of behind it. 0 when no
+   * panel is open.
+   */
+  focusRightInset?: number
 }
 
 const ZOOM_STEP = 1.6
@@ -71,6 +78,7 @@ export function InfiniteCanvas({
   contentBounds,
   controllerRef,
   hidden = false,
+  focusRightInset = 0,
 }: InfiniteCanvasProps) {
   const { viewport, ref, panning, handlers, zoomBy, zoomTo, animateTo, jumpTo } =
     useViewport(initial)
@@ -81,6 +89,10 @@ export function InfiniteCanvas({
   vpRef.current = viewport
 
   // Camera command: centre a world rect and scale it to 60% of the viewport height.
+  // Read live so a focus fired right after the panel opens uses the current inset.
+  const insetRef = useRef(focusRightInset)
+  insetRef.current = focusRightInset
+
   const focusRect = useCallback(
     (rect: Box) => {
       const el = ref.current
@@ -93,7 +105,10 @@ export function InfiniteCanvas({
       const scale = clamp((vh * 0.6) / rect.h, MIN_SCALE, MAX_SCALE)
       const cx = rect.x + rect.w / 2
       const cy = rect.y + rect.h / 2
-      animateTo({ x: vw / 2 - cx * scale, y: vh / 2 - cy * scale, scale })
+      // Centre the screen in the region LEFT of the panel, not the whole viewport, so an
+      // opened screen sits between the left edge and the panel rather than behind it.
+      const inset = insetRef.current
+      animateTo({ x: (vw - inset) / 2 - cx * scale, y: vh / 2 - cy * scale, scale })
     },
     [animateTo, ref],
   )

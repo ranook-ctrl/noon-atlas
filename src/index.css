@@ -212,15 +212,77 @@ body {
  * element, and the alternative is a blur property that lies.
  */
 .dashboard__right-nav {
+  /* Panel width — the camera inset in Dashboard mirrors this so a focused screen lands in
+     the free space to the LEFT of the panel rather than behind it. */
+  --rightnav-w: 600px;
   position: absolute;
   top: 62px;
-  right: calc(-1 * (339px + 40px));
+  right: calc(-1 * (var(--rightnav-w) + 40px));
   bottom: 20px;
   transition: right 500ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .dashboard__right-nav.is-open {
   right: 20px;
+}
+
+/* Two columns: the screen preview on the left, its details/stats on the right. */
+.rightnav {
+  display: flex;
+  flex-direction: row;
+  gap: 20px;
+  width: var(--rightnav-w);
+  height: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.rightnav__preview {
+  flex: 0 0 auto;
+  height: 100%;
+}
+
+.rightnav__content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.rightnav__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 2px;
+  flex: 0 0 auto;
+}
+
+.rightnav__close {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.rightnav__close:disabled {
+  cursor: default;
+}
+
+/* The stat/neighbour area scrolls within the right column, so the preview and header
+   stay put while a long list moves. */
+.rightnav__pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* Breadcrumb trail, bottom-left (frame x:20). */

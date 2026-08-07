@@ -10,6 +10,8 @@ import type { Device, ScreenId, Section } from '../domain/types'
 
 /** inner content column width (Device Size + tabs are 299/300 in Figma) */
 const CONTENT_W = 299
+/** left preview column width — a tall portrait window onto the artboard */
+const PREVIEW_W = 240
 
 const PINK = '#F7306F'
 
@@ -357,150 +359,87 @@ export function RightNav({
   const TABS: InspectorTab[] = ['stats', 'navigateTo', 'reachedFrom']
 
   return (
-    <div
-      /*
-       * The one panel that never got converted to the shared tool surface, which is why
-       * it looked washed out beside Explore: a 4%-white fill over a 40px blur is almost
-       * transparent, whereas the tool surface is a properly tinted dark panel.
-       */
-      className="tool-surface"
-      style={{
-        display: 'inline-flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 20,
-        padding: '20px 20px 0',
-        height: '100%',
-        maxHeight: '100%',
-        boxSizing: 'border-box',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Header — title + close (pinned; the body below fills the rest) */}
-      <div
-        style={{
-          display: 'flex',
-          width: CONTENT_W,
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 16,
-          padding: '0 2px',
-          flex: '0 0 auto',
-        }}
-      >
-        <ScreenTitle title={title} onRename={onRename} editing={editing} onEditingChange={onEditingChange} />
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={onClose ? 'Close panel' : undefined}
-          disabled={!onClose}
-          style={{
-            display: 'inline-flex',
-            width: 32,
-            height: 32,
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 0,
-            border: 0,
-            background: 'transparent',
-            cursor: onClose ? 'pointer' : 'default',
-          }}
-        >
-          <MaskIcon src="/icons/close.svg" width={11} height={11} color="#FFFFFF" />
-        </button>
+    <div className="tool-surface rightnav">
+      {/* LEFT — the screen, big. A tall preview filling the panel height, so you read the
+          artboard first and its numbers beside it rather than stacked below. It's also the
+          only surface where a screen's sections are hoverable (drives the section card). */}
+      <div className="rightnav__preview">
+        <MasterImage
+          width={PREVIEW_W}
+          height="100%"
+          src={src}
+          alt={title}
+          sections={sections}
+          onHoverSection={onHoverSection}
+        />
       </div>
 
-      {/* Body — flexes to fill the space left under the header (viewport-based),
-          scrolls when the content is taller than the available height. */}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          width: CONTENT_W,
-          flex: '1 1 auto',
-          minHeight: 0,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-        }}
-      >
-        {/* Content keeps its natural height (flex-shrink:0) so the body scrolls
-            instead of compressing the fixed-size children — the 36px section
-            tabs and the phone preview stay their designed size. */}
-        <div
-          style={{
-            flexShrink: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 20,
-            paddingBottom: 20,
-          }}
-        >
-          {/* Device row */}
-          <DeviceSize
-            device={device.name}
-            dimensions={`${device.width} x ${device.height}`}
-            width={CONTENT_W}
+      {/* RIGHT — title, device, tabs, and the stat groups. Scrolls on its own if the
+          content is taller than the panel. */}
+      <div className="rightnav__content">
+        <div className="rightnav__header">
+          <ScreenTitle
+            title={title}
+            onRename={onRename}
+            editing={editing}
+            onEditingChange={onEditingChange}
           />
+          <button
+            type="button"
+            className="rightnav__close"
+            onClick={onClose}
+            aria-label={onClose ? 'Close panel' : undefined}
+            disabled={!onClose}
+          >
+            <MaskIcon src="/icons/close.svg" width={11} height={11} color="#FFFFFF" />
+          </button>
+        </div>
 
-          {/* Artboard preview, FIRST — you look at the screen, then read its numbers.
-              Compact (a scroll window into the full-length capture, not the whole 572px)
-              so the tabs and headline stats still land in the same fold below it. An
-              earlier pass had put this last to surface the stats; the ask is both on one
-              panel, which a shorter preview gives without reordering. It's also the only
-              surface where a screen's sections are hoverable — that drives the
-              section-level stats card. */}
-          <MasterImage
-            width={CONTENT_W}
-            height={300}
-            src={src}
-            alt={title}
-            sections={sections}
-            onHoverSection={onHoverSection}
-          />
+        <DeviceSize
+          device={device.name}
+          dimensions={`${device.width} x ${device.height}`}
+          width={CONTENT_W}
+        />
 
-          {/* Tab strip (Figma 54:80782). Previously a hand-rolled duplicate of
-              SegmentedControl whose last two tabs were inert. */}
-          <SegmentedControl
-            width={CONTENT_W}
-            height={36}
-            tone="accent"
-            ariaLabel="Screen details"
-            borderColor="rgba(255, 255, 255, 0.12)"
-            dividerAfter={[1]}
-            dividerColor="rgba(255, 255, 255, 0.12)"
-            segments={[
-              { label: 'Page Stats', selected: tab === 'stats' },
-              { label: 'Navigate to', selected: tab === 'navigateTo' },
-              { label: 'Reached from', selected: tab === 'reachedFrom' },
-            ]}
-            onSelect={(i) => setTab(TABS[i])}
-          />
+        {/* Tab strip (Figma 54:80782) — one SegmentedControl, not a hand-rolled dupe. */}
+        <SegmentedControl
+          width={CONTENT_W}
+          height={36}
+          tone="accent"
+          ariaLabel="Screen details"
+          borderColor="rgba(255, 255, 255, 0.12)"
+          dividerAfter={[1]}
+          dividerColor="rgba(255, 255, 255, 0.12)"
+          segments={[
+            { label: 'Page Stats', selected: tab === 'stats' },
+            { label: 'Navigate to', selected: tab === 'navigateTo' },
+            { label: 'Reached from', selected: tab === 'reachedFrom' },
+          ]}
+          onSelect={(i) => setTab(TABS[i])}
+        />
 
-          {/* Keyed on the tab so the pane re-mounts and replays its entrance — an
-              instant swap reads as a glitch beside a sliding indicator. */}
-          <div className="inspector-pane" key={tab} style={{ width: CONTENT_W }}>
-            {tab === 'stats' && (
-              <>
-                <PrimaryStats stats={primary} />
-                <SecondaryStats stats={secondary} />
-              </>
-            )}
-            {tab === 'navigateTo' && (
-              <NeighbourList
-                rows={navigateTo}
-                emptyLabel="This screen doesn’t link anywhere yet."
-                onSelect={onSelectScreen}
-              />
-            )}
-            {tab === 'reachedFrom' && (
-              <NeighbourList
-                rows={reachedFrom}
-                emptyLabel="No screens link here — this is an entry point."
-                onSelect={onSelectScreen}
-              />
-            )}
-          </div>
+        {/* Keyed on the tab so the pane re-mounts and replays its entrance. */}
+        <div className="inspector-pane rightnav__pane" key={tab} style={{ width: CONTENT_W }}>
+          {tab === 'stats' && (
+            <>
+              <PrimaryStats stats={primary} />
+              <SecondaryStats stats={secondary} />
+            </>
+          )}
+          {tab === 'navigateTo' && (
+            <NeighbourList
+              rows={navigateTo}
+              emptyLabel="This screen doesn’t link anywhere yet."
+              onSelect={onSelectScreen}
+            />
+          )}
+          {tab === 'reachedFrom' && (
+            <NeighbourList
+              rows={reachedFrom}
+              emptyLabel="No screens link here — this is an entry point."
+              onSelect={onSelectScreen}
+            />
+          )}
         </div>
       </div>
     </div>

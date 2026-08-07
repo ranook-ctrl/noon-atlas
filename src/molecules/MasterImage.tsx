@@ -4,7 +4,8 @@ export type HoveredSection = { sectionId: string; top: number; left: number }
 
 type MasterImageProps = {
   width?: number
-  height?: number
+  /** Number (px) or a CSS length like '100%' so the preview can fill a flex column. */
+  height?: number | string
   /** the screenshot to render inside the phone frame */
   src?: string
   alt?: string

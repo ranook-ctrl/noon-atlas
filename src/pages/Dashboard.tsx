@@ -863,6 +863,9 @@ export default function Dashboard() {
           controllerRef={cameraRef}
           hidden={mode !== 'map' && !cascading}
           showControls={false}
+          /* Reserve the panel's footprint (width 600 + 20 right margin) so a focused
+             screen centres in the space left of it. Mirrors `--rightnav-w` in the CSS. */
+          focusRightInset={rightNavOpen ? 620 : 0}
         >
           <AtlasBoards
             screens={snapshot.screens}
