@@ -215,11 +215,12 @@ body {
   /* Panel width — the camera inset in Dashboard mirrors this so a focused screen lands in
      the free space to the LEFT of the panel rather than behind it. */
   --rightnav-w: 600px;
-  position: absolute;
-  top: 62px;
+  position: fixed;
   right: calc(-1 * (var(--rightnav-w) + 40px));
-  /* Hug the content, capped to the viewport — NOT pinned to the bottom. Pinning left a
-     large empty band below the stats whenever the content was shorter than the screen. */
+  /* Vertically centred on the side, accounting for the top bar (62px). */
+  top: 50%;
+  transform: translateY(-50%);
+  /* Hug the content, capped to the viewport. */
   height: fit-content;
   max-height: calc(100vh - 82px);
   transition: right 500ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -2129,12 +2130,19 @@ kbd {
 }
 
 .boot__counter {
+  /* Centered, bold, brutalist — the counter dominates the loader. On wide screens it's
+     the middle column; on narrow, it's still centred via justify-self. */
   justify-self: center;
+  text-align: center;
 }
 
 .boot__percent {
-  font-size: 40px;
+  /* Brutalist design: oversized monospace counter, bold weight, wide letter spacing
+     for impact. The counter is the loading signal the user watches. */
+  font-size: 80px;
   line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   color: var(--text-1);
   font-variant-numeric: tabular-nums;
 }
