@@ -3,9 +3,14 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { CanvasSection } from './CanvasSection'
 import { useCanvas } from './CanvasContext'
 import { Artboard } from '../components'
-import { CARD_W, connectorPath, frameBox, resolveAlign } from './boardGeometry'
+import { CARD_W, FRAME_H, GAP, LABEL_H, connectorPath, frameBox, resolveAlign } from './boardGeometry'
 import type { AlignGuide } from './boardGeometry'
 import { GRID_UNIT } from './crossGrid'
+import { gridField } from './gridField'
+import { PHYSICS, clampVelocity, scaledPhysics, startFlight, tiltFromVelocity, velocityFromSamples } from './boardPhysics'
+import type { Sample } from './boardPhysics'
+import { sfx } from '../utils/sfx'
+import { useReducedMotion } from '../hooks/useReducedMotion'
 import { AtlasConnectors } from './AtlasConnectors'
 import type { FlowWeight } from './AtlasConnectors'
 import type { Flow, FlowId, Screen, ScreenId, Vec } from '../domain/types'
@@ -129,6 +134,23 @@ export function AtlasBoards({
 }: AtlasBoardsProps) {
   const { focusRect, screenToWorld, getScale } = useCanvas()
   const [hoveredFlowId, setHoveredFlowId] = useState<FlowId | null>(null)
+
+  /**
+   * Publish every board's frame to the grid field, so the mesh behind them bends around
+   * their silhouettes.
+   *
+   * This effect runs on render, which during a drag *or* a momentum flight is the local
+   * optimistic position — both paths report through `onScreenDrag`, so the mesh follows
+   * the board continuously without needing a second channel.
+   */
+  useEffect(() => {
+    gridField.replaceRects(
+      screens.map((s) => {
+        const box = frameBox(s.position)
+        return [s.id, { x: box.x, y: box.y, w: box.w, h: box.h }] as const
+      }),
+    )
+  }, [screens])
   /** Live alignment guides while a single board drags. Cleared on drag end. */
   const [guides, setGuides] = useState<AlignGuide[]>([])
   /**
@@ -591,9 +613,13 @@ const DraggableBoard = memo(function DraggableBoard({
   onDrag,
   onDragEnd,
 }: DraggableBoardProps) {
-  const { getScale } = useCanvas()
+  const { getScale, screenToWorld } = useCanvas()
+  const reducedMotion = useReducedMotion()
   const [hovered, setHovered] = useState(false)
   const [dragging, setDragging] = useState(false)
+  /** Coasting after release. Keeps the lifted styling on until the board settles. */
+  const [flying, setFlying] = useState(false)
+  const boardRef = useRef<HTMLDivElement | null>(null)
   const drag = useRef<{
     startX: number
     startY: number
@@ -605,7 +631,124 @@ const DraggableBoard = memo(function DraggableBoard({
     prev: Vec
   } | null>(null)
 
+  /** Recent world positions, for the release velocity estimate. */
+  const samples = useRef<Sample[]>([])
+  /** Cancels an in-flight throw. */
+  const flight = useRef<(() => void) | null>(null)
+  /** Grid cell the board's centre was last in, for the tick sound. */
+  const cell = useRef('')
+  const lastTick = useRef(0)
+  /** The canvas element, needed to project the visible viewport into world space. */
+  const host = useRef<HTMLElement | null>(null)
+
   const isGroup = selected && groupSize > 1
+
+  /** The board's full footprint in world units — label, gap and frame. */
+  const BOARD_SIZE = { w: CARD_W, h: LABEL_H + GAP + FRAME_H }
+
+  /**
+   * Bank the board into its motion.
+   *
+   * Written as custom properties rather than a full `transform`, so the CSS rule stays
+   * the single author of the composed transform. Setting `transform` inline here would
+   * silently defeat the hover lift and the drag scale, which are declared in the sheet.
+   */
+  const applyTilt = (v: Vec) => {
+    const el = boardRef.current
+    if (!el || reducedMotion) return
+    const { rx, ry } = tiltFromVelocity(v, getScale())
+    el.style.setProperty('--tilt-x', `${rx.toFixed(2)}deg`)
+    el.style.setProperty('--tilt-y', `${ry.toFixed(2)}deg`)
+  }
+
+  const clearTilt = () => {
+    const el = boardRef.current
+    if (!el) return
+    el.style.removeProperty('--tilt-x')
+    el.style.removeProperty('--tilt-y')
+  }
+
+  /** Stop a coast — grabbing a moving board must take control of it immediately. */
+  const cancelFlight = () => {
+    flight.current?.()
+    flight.current = null
+    setFlying(false)
+    clearTilt()
+  }
+
+  useEffect(() => cancelFlight, [])
+
+  /**
+   * A grid-crossing tick while the board is being dragged.
+   *
+   * Rate-limited and pitch-jittered, both for the same reason: a board dragged fast
+   * crosses many cells per second, and an un-throttled run of the identical sample is
+   * a machine-gun rather than a texture.
+   */
+  const tickOnGridCross = (pos: Vec) => {
+    const cx = Math.floor((pos.x + BOARD_SIZE.w / 2) / GRID_UNIT)
+    const cy = Math.floor((pos.y + BOARD_SIZE.h / 2) / GRID_UNIT)
+    const key = `${cx},${cy}`
+    if (key === cell.current) return
+    cell.current = key
+    const now = performance.now()
+    if (now - lastTick.current < 25) return
+    lastTick.current = now
+    sfx.play(0.035, 1 + (Math.random() - 0.5) * 0.3)
+  }
+
+  /**
+   * Release the board and let it coast.
+   *
+   * Walls are the *visible viewport* projected into world coordinates, re-read every
+   * frame. An absolute world boundary would be worse than none: you'd watch a board sail
+   * off-screen and stop somewhere you can't see, against an edge you had no way to
+   * anticipate. Bouncing off what you can actually see keeps the throw legible.
+   */
+  const throwBoard = (from: Vec, v: Vec, config: ReturnType<typeof scaledPhysics>) => {
+    setFlying(true)
+    flight.current = startFlight(
+      from,
+      v,
+      {
+        size: BOARD_SIZE,
+        walls: () => {
+          const el = host.current
+          const w = el?.clientWidth ?? window.innerWidth
+          const h = el?.clientHeight ?? window.innerHeight
+          const tl = screenToWorld(0, 0)
+          const br = screenToWorld(w, h)
+          const m = config.boundaryMargin
+          return {
+            minX: tl.x + m,
+            minY: tl.y + m,
+            maxX: br.x - m,
+            maxY: br.y - m,
+          }
+        },
+        onFrame: (pos, vel) => {
+          onDrag(id, pos)
+          applyTilt(vel)
+        },
+        onBounce: ({ at, force }) => {
+          // The grid ripples from the point of contact — the impact is felt by the plane,
+          // not just by the board, which is what sells the two as one material system.
+          gridField.pulse(at.x, at.y, force)
+          if (force > 0.02) {
+            // Quadratic, so a glancing knock stays almost silent while a hard throw lands.
+            sfx.play(0.015 + force * force * 0.135, 0.8)
+          }
+        },
+        onRest: (pos) => {
+          flight.current = null
+          setFlying(false)
+          clearTilt()
+          onDragEnd(id, pos)
+        },
+      },
+      config,
+    )
+  }
 
   const onPointerDown = (e: ReactPointerEvent) => {
     if (e.button !== 0) return
@@ -620,7 +763,19 @@ const DraggableBoard = memo(function DraggableBoard({
     // gives up tap-to-focus while panning, which is how every canvas tool behaves.
     if (!draggable) return
     e.stopPropagation() // don't let the canvas pan
-    drag.current = { startX: e.clientX, startY: e.clientY, base: pos, moved: false, last: pos, prev: pos }
+    // Grabbing a coasting board must hand control straight back to the pointer.
+    cancelFlight()
+    host.current = (e.currentTarget as HTMLElement).closest('.atlas-canvas') as HTMLElement | null
+    drag.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      base: pos,
+      moved: false,
+      last: pos,
+      prev: pos,
+    }
+    samples.current = [{ x: pos.x, y: pos.y, t: performance.now() }]
+    cell.current = ''
 
     const onPointerMove = (ev: PointerEvent) => {
       const d = drag.current
@@ -644,6 +799,14 @@ const DraggableBoard = memo(function DraggableBoard({
           : raw
         // Dragging one of several selected boards moves the whole set by the same
         // delta, so relative arrangement is preserved.
+        // Sampled in *world* units, so the release velocity is in the same space the
+        // flight integrates in and a throw feels the same at any zoom level.
+        const now = performance.now()
+        samples.current.push({ x: d.last.x, y: d.last.y, t: now })
+        if (samples.current.length > PHYSICS.velocitySampleCount) samples.current.shift()
+        applyTilt(velocityFromSamples(samples.current, now))
+        tickOnGridCross(d.last)
+
         if (isGroup && onGroupDrag) {
           const delta = { x: d.last.x - d.prev.x, y: d.last.y - d.prev.y }
           d.prev = d.last
@@ -663,8 +826,29 @@ const DraggableBoard = memo(function DraggableBoard({
       // computed — NOT one read back out of React state, which may not have
       // committed yet if pointerup shares a task with the last pointermove.
       if (d?.moved) {
-        if (isGroup && onGroupDragEnd) onGroupDragEnd()
-        else onDragEnd(id, d.last)
+        if (isGroup && onGroupDragEnd) {
+          // A group is not thrown. Seventeen boards coasting and bouncing off the walls
+          // independently would scatter a layout the user arranged on purpose, and
+          // there's no reading of "flick a selection" that means that.
+          clearTilt()
+          onGroupDragEnd()
+        } else {
+          // Snapshot the tuning at the zoom the release happened at, so a camera move
+          // mid-flight can't retune the physics underneath a throw already in progress.
+          const config = scaledPhysics(getScale())
+          const v = clampVelocity(
+            velocityFromSamples(samples.current, performance.now()),
+            config.maxVelocity,
+          )
+          // Under the threshold the board is being *placed*, not thrown — coasting a
+          // careful placement by a few units would feel like the tool disagreeing.
+          if (!reducedMotion && Math.hypot(v.x, v.y) > config.momentumThreshold) {
+            throwBoard(d.last, v, config)
+          } else {
+            clearTilt()
+            onDragEnd(id, d.last)
+          }
+        }
       } else if (d) {
         // One callback for both: Shift-click extends the selection, a plain tap
         // replaces it. The page decides what that means for focus and the camera.
@@ -680,7 +864,8 @@ const DraggableBoard = memo(function DraggableBoard({
   return (
     <CanvasSection x={pos.x} y={pos.y} width={CARD_W}>
       <div
-        className={`atlas-board${dragging ? ' is-dragging' : ''}${dimmed ? ' is-dimmed' : ''}${draggable ? '' : ' is-pan-mode'}${selected ? ' is-selected' : ''}${drawFlowMode ? ' is-flow-mode' : ''}${isFlowSource ? ' is-flow-source' : ''}${isFlowTarget ? ' is-flow-target' : ''}`}
+        ref={boardRef}
+        className={`atlas-board${dragging ? ' is-dragging' : ''}${flying ? ' is-flying' : ''}${dimmed ? ' is-dimmed' : ''}${draggable ? '' : ' is-pan-mode'}${selected ? ' is-selected' : ''}${drawFlowMode ? ' is-flow-mode' : ''}${isFlowSource ? ' is-flow-source' : ''}${isFlowTarget ? ' is-flow-target' : ''}`}
         onPointerDown={onPointerDown}
         /* Double-click renames. The editor itself lives in the 1:1 chrome panel, not on
            the board — see `ScreenTitle`. */

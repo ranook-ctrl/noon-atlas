@@ -8,15 +8,15 @@ import type { HoveredSection } from './MasterImage'
 import { SegmentedControl } from './SegmentedControl'
 import type { Device, ScreenId, Section } from '../domain/types'
 
-/** inner content column width (Device Size + tabs are 299/300 in Figma) */
+/**
+ * The single column width (Device Size + tabs are 299/300 in Figma).
+ *
+ * The panel used to be two columns — a 240px preview beside a 299px stat column — with the
+ * preview height pinned to the viewport. Now that it's one vertical column the preview takes
+ * the full content width and its height comes from the artboard's own aspect, so the old
+ * `PREVIEW_W`/`PREVIEW_H` pair is gone; see `naturalH` and `windowH` in the component.
+ */
 const CONTENT_W = 299
-/** left preview column width — a tall portrait window onto the artboard */
-const PREVIEW_W = 240
-/** preview height: the 400×865 artboard rendered at 240 wide is ~519 tall. Viewport-
-    relative (not a `%`, which has no definite parent to resolve against now the panel
-    hugs its content) so it caps at 519 on a normal desktop but shrinks on a short
-    viewport rather than overflowing the card. 122 = top 62 + bottom 20 + card padding 40. */
-const PREVIEW_H = 'min(519px, calc(100vh - 122px))'
 
 const PINK = '#F7306F'
 
@@ -338,6 +338,28 @@ type RightNavProps = {
 
 const FALLBACK_DEVICE: Device = { name: 'Artboard', width: 400, height: 865 }
 
+/**
+ * Device viewports the preview can be windowed to.
+ *
+ * What the selector actually does, and why that's honest: the artboards are *full-page*
+ * screenshots — 400×865 here, and 430×7800 for the homepage — not device-sized captures.
+ * So a device picker can't legitimately claim "this is how the screen renders on an
+ * iPhone 13 Pro". What it can answer, truthfully and usefully, is **how much of the page
+ * falls above the fold on that device**: the image is always drawn at its own true aspect
+ * and the *window over it* changes. Nothing is ever rescaled or restated as a different
+ * resolution.
+ *
+ * The sizes are logical CSS viewports. Note 13 Pro is 390×844 — the 375×812 often labelled
+ * as such is the iPhone X / 11 Pro / 12 mini.
+ */
+const VIEWPORTS = [
+  { name: 'Artboard', width: 400, height: 865, native: true },
+  { name: 'iPhone SE', width: 375, height: 667, native: false },
+  { name: 'iPhone 13 Pro', width: 390, height: 844, native: false },
+  { name: 'iPhone 15 Pro Max', width: 430, height: 932, native: false },
+  { name: 'Pixel 7', width: 412, height: 915, native: false },
+]
+
 export function RightNav({
   onHoverSection,
   title = 'Homepage',
@@ -356,6 +378,9 @@ export function RightNav({
   onClose,
 }: RightNavProps) {
   const [tab, setTab] = useState<InspectorTab>('stats')
+  /** Which device viewport the preview is windowed to. 0 is the artboard's own size. */
+  const [vp, setVp] = useState(0)
+  const [vpOpen, setVpOpen] = useState(false)
 
   // Moving to another screen should land on its stats, not leave you looking at a
   // neighbour list you opened for the previous one.
@@ -363,25 +388,38 @@ export function RightNav({
 
   const TABS: InspectorTab[] = ['stats', 'navigateTo', 'reachedFrom']
 
+  /** The artboard at its true aspect — never squashed, only ever windowed. */
+  const naturalH = Math.round(CONTENT_W * (device.height / device.width))
+  const chosen = VIEWPORTS[vp]
+  const windowH = chosen.native
+    ? naturalH
+    : Math.round(CONTENT_W * (chosen.height / chosen.width))
+
+  useEffect(() => {
+    if (!vpOpen) return
+    const close = () => setVpOpen(false)
+    const t = window.setTimeout(() => window.addEventListener('mousedown', close), 10)
+    return () => {
+      window.clearTimeout(t)
+      window.removeEventListener('mousedown', close)
+    }
+  }, [vpOpen])
+
   return (
     <div className="tool-surface rightnav">
-      {/* LEFT — the screen, big. A tall preview filling the panel height, so you read the
-          artboard first and its numbers beside it rather than stacked below. It's also the
-          only surface where a screen's sections are hoverable (drives the section card). */}
-      <div className="rightnav__preview">
-        <MasterImage
-          width={PREVIEW_W}
-          height={PREVIEW_H}
-          src={src}
-          alt={title}
-          sections={sections}
-          onHoverSection={onHoverSection}
-        />
-      </div>
+      {/*
+        One vertical column, with a fixed head and a scrolling tail.
+        The head is everything that must survive any viewport height — title, device, the
+        two headline numbers, and the tabs. The tail is the preview and the long stat list.
 
-      {/* RIGHT — title, device, tabs, and the stat groups. Scrolls on its own if the
-          content is taller than the panel. */}
-      <div className="rightnav__content">
+        The headline pair sits ABOVE the preview deliberately. A full-aspect phone preview is
+        647px tall on its own, and the panel caps at `100vh - 82px` (817px at 900), so with
+        the preview first there is no arrangement in which a stat lands in the first fold —
+        the chrome and the image alone overrun the panel. Putting the two numbers that matter
+        above the image guarantees them at any height, and costs only that the artboard now
+        starts a little lower.
+      */}
+      <div className="rightnav__head">
         <div className="rightnav__header">
           <ScreenTitle
             title={title}
@@ -400,11 +438,47 @@ export function RightNav({
           </button>
         </div>
 
-        <DeviceSize
-          device={device.name}
-          dimensions={`${device.width} x ${device.height}`}
-          width={CONTENT_W}
-        />
+        {/* Real selector now — the chevron appears because there is a menu behind it.
+            Choosing a device re-windows the preview below; see `VIEWPORTS`. */}
+        <div className="rightnav__device">
+          <DeviceSize
+            device={chosen.native ? device.name : chosen.name}
+            dimensions={
+              chosen.native ? `${device.width} x ${device.height}` : `${chosen.width} x ${chosen.height}`
+            }
+            width={CONTENT_W}
+            onClick={() => setVpOpen((o) => !o)}
+          />
+          {vpOpen && (
+            <div className="rightnav__device-menu" role="menu" onMouseDown={(e) => e.stopPropagation()}>
+              {VIEWPORTS.map((v, i) => (
+                <button
+                  key={v.name}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={i === vp}
+                  className={`rightnav__device-item${i === vp ? ' is-on' : ''}`}
+                  onClick={() => {
+                    setVp(i)
+                    setVpOpen(false)
+                  }}
+                >
+                  <span className="pixel-line">{v.name}</span>
+                  <span className="pixel rightnav__device-dims">
+                    {v.native ? `${device.width} × ${device.height}` : `${v.width} × ${v.height}`}
+                  </span>
+                </button>
+              ))}
+              {/* States the compromise rather than hiding it. */}
+              <span className="pixel-line rightnav__device-note">
+                Windows the page — never rescales it
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* The first-fold guarantee. */}
+        {tab === 'stats' && <PrimaryStats stats={primary} />}
 
         {/* Tab strip (Figma 54:80782) — one SegmentedControl, not a hand-rolled dupe. */}
         <SegmentedControl
@@ -422,30 +496,50 @@ export function RightNav({
           ]}
           onSelect={(i) => setTab(TABS[i])}
         />
+      </div>
 
-        {/* Keyed on the tab so the pane re-mounts and replays its entrance. */}
-        <div className="inspector-pane rightnav__pane" key={tab} style={{ width: CONTENT_W }}>
-          {tab === 'stats' && (
-            <>
-              <PrimaryStats stats={primary} />
-              <SecondaryStats stats={secondary} />
-            </>
-          )}
-          {tab === 'navigateTo' && (
-            <NeighbourList
-              rows={navigateTo}
-              emptyLabel="This screen doesn’t link anywhere yet."
-              onSelect={onSelectScreen}
-            />
-          )}
-          {tab === 'reachedFrom' && (
-            <NeighbourList
-              rows={reachedFrom}
-              emptyLabel="No screens link here — this is an entry point."
-              onSelect={onSelectScreen}
-            />
-          )}
-        </div>
+      {/* Keyed on the tab so the pane re-mounts and replays its entrance. */}
+      <div className="inspector-pane rightnav__pane" key={tab} style={{ width: CONTENT_W }}>
+        {tab === 'stats' && (
+          <>
+            {/* The artboard, windowed to the chosen device. The image keeps its own aspect
+                and the wrapper clips — so the fold is real and the page is never squashed.
+                This is also the only surface where a screen's sections are hoverable. */}
+            <div
+              className={`rightnav__viewport${chosen.native ? '' : ' is-windowed'}`}
+              style={{ height: windowH }}
+            >
+              <MasterImage
+                width={CONTENT_W}
+                height={naturalH}
+                src={src}
+                alt={title}
+                sections={sections}
+                onHoverSection={onHoverSection}
+              />
+            </div>
+            {!chosen.native && (
+              <span className="pixel-line rightnav__fold-note">
+                Fold at {chosen.height}px on {chosen.name}
+              </span>
+            )}
+            <SecondaryStats stats={secondary} />
+          </>
+        )}
+        {tab === 'navigateTo' && (
+          <NeighbourList
+            rows={navigateTo}
+            emptyLabel="This screen doesn’t link anywhere yet."
+            onSelect={onSelectScreen}
+          />
+        )}
+        {tab === 'reachedFrom' && (
+          <NeighbourList
+            rows={reachedFrom}
+            emptyLabel="No screens link here — this is an entry point."
+            onSelect={onSelectScreen}
+          />
+        )}
       </div>
     </div>
   )

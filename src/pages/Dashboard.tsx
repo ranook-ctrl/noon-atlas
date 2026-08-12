@@ -13,6 +13,7 @@ import {
   ShortcutSheet,
   LoadingOverlay,
   CommandBar,
+  DialMenu,
   EdgeCard,
   MultiSelectPanel,
 } from '../molecules'
@@ -67,7 +68,7 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
  * `375` typed independently in both places, which would silently misalign the pink
  * leader line the first time either moved.
  */
-const SECTION_CARD_INSET = 375
+const SECTION_CARD_INSET = 440
 
 /**
  * Below this zoom the details panel slides away and the screen reads as deselected;
@@ -166,6 +167,16 @@ export default function Dashboard() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [rightNavOpen, setRightNavOpen] = useState(false)
   const [activeTool, setActiveTool] = useState<ToolId>('select')
+  /**
+   * The tool dial. `at` is where it was summoned in client coordinates — a right-click
+   * point on the canvas, or a point just above the bar's trigger.
+   */
+  const [dial, setDial] = useState<{ open: boolean; at: { x: number; y: number } }>({
+    open: false,
+    at: { x: 0, y: 0 },
+  })
+  const openDial = useCallback((at: { x: number; y: number }) => setDial({ open: true, at }), [])
+  const closeDial = useCallback(() => setDial((d) => ({ ...d, open: false })), [])
   const { prefs, toggle: togglePref } = useViewPrefs()
   const toggles = useMemo<Partial<Record<ToolId, boolean>>>(
     () => ({ snap: prefs.snap, minimap: prefs.minimap, isolate: prefs.isolate }),
@@ -865,6 +876,17 @@ export default function Dashboard() {
   return (
     <div
       className="dashboard"
+      /* Right-click summons the tool dial at the pointer. Bound here rather than on the
+         canvas element so it also works over a board, and suppressed while the dial is
+         already up so a second right-click can't stack another ring. Only in Map mode —
+         Screens has no tools to offer, and swallowing the native menu there would be
+         taking something away for nothing. */
+      onContextMenu={(e) => {
+        if (mode !== 'map' || !canvasReady) return
+        e.preventDefault()
+        if (dial.open) closeDial()
+        else openDial({ x: e.clientX, y: e.clientY })
+      }}
       style={
         {
           '--section-card-inset': `${SECTION_CARD_INSET}px`,
@@ -881,9 +903,10 @@ export default function Dashboard() {
           controllerRef={cameraRef}
           hidden={mode !== 'map' && !cascading}
           showControls={false}
-          /* Reserve the panel's footprint (width 600 + 20 right margin) so a focused
-             screen centres in the space left of it. Mirrors `--rightnav-w` in the CSS. */
-          focusRightInset={rightNavOpen ? 620 : 0}
+          /* Reserve the panel's footprint (width 340 + 20 right margin) so a focused
+             screen centres in the space left of it. Mirrors `--rightnav-w` in the CSS —
+             dropped from 620 when the panel went from two columns to one. */
+          focusRightInset={rightNavOpen ? 360 : 0}
         >
           <AtlasBoards
             screens={snapshot.screens}
@@ -1090,8 +1113,8 @@ export default function Dashboard() {
           <div className="dashboard__widget dashboard__commandbar">
             <CommandBar
               activeTool={effectiveTool}
-              onSelectTool={handleTool}
-              toggles={toggles}
+              dialOpen={dial.open}
+              onOpenDial={openDial}
               history={history}
               onUndo={actions.undo}
               onRedo={actions.redo}
@@ -1102,6 +1125,20 @@ export default function Dashboard() {
               onFit={contentBounds ? () => cameraRef.current?.fitContent() : undefined}
             />
           </div>
+        )}
+
+        {/* The tool dial. Rendered as a sibling of the chrome rather than inside the
+            command bar, because it is summoned anywhere on the plane and must not be
+            clipped by, or positioned relative to, the bar. */}
+        {mode === 'map' && (
+          <DialMenu
+            open={dial.open}
+            at={dial.at}
+            activeTool={effectiveTool}
+            toggles={toggles}
+            onSelect={handleTool}
+            onClose={closeDial}
+          />
         )}
 
         {/* Destructive-edit confirmation, anchored above the command bar.

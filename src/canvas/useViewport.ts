@@ -108,18 +108,11 @@ export function useViewport(initial?: Partial<Viewport>): ViewportController {
     return () => window.removeEventListener('pointerdown', cancelAnim, true)
   }, [cancelAnim])
 
-  /** Zoom by `factor`, keeping the world point under (cx, cy) fixed on screen. */
-  const zoomAt = useCallback((cx: number, cy: number, factor: number) => {
-    setViewport((v) => {
-      const scale = clamp(v.scale * factor, MIN_SCALE, MAX_SCALE)
-      if (scale === v.scale) return v
-      const worldX = (cx - v.x) / v.scale
-      const worldY = (cy - v.y) / v.scale
-      return { scale, x: cx - worldX * scale, y: cy - worldY * scale }
-    })
-  }, [])
-
-  // Native wheel listener so we can preventDefault (React's onWheel is passive).
+  // Wheel / trackpad: applied directly, no lerp.
+  //
+  // Trackpads already send smooth, high-frequency deltas — adding a lerp on top
+  // just introduces lag that makes pinch-zoom and two-finger pan feel disconnected.
+  // Programmatic transitions (button zoom, fit-all, focus) use `animateTo` for easing.
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -127,19 +120,34 @@ export function useViewport(initial?: Partial<Viewport>): ViewportController {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       cancelAnim()
-      const rect = el.getBoundingClientRect()
-      const cx = e.clientX - rect.left
-      const cy = e.clientY - rect.top
+
       if (e.ctrlKey || e.metaKey) {
-        zoomAt(cx, cy, Math.exp(-e.deltaY * ZOOM_SENSITIVITY))
+        const rect = el.getBoundingClientRect()
+        const cx = e.clientX - rect.left
+        const cy = e.clientY - rect.top
+        const factor = Math.exp(-e.deltaY * ZOOM_SENSITIVITY)
+        setViewport((v) => {
+          const newScale = clamp(v.scale * factor, MIN_SCALE, MAX_SCALE)
+          const worldX = (cx - v.x) / v.scale
+          const worldY = (cy - v.y) / v.scale
+          return {
+            scale: newScale,
+            x: cx - worldX * newScale,
+            y: cy - worldY * newScale,
+          }
+        })
       } else {
-        setViewport((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }))
+        setViewport((v) => ({
+          ...v,
+          x: v.x - e.deltaX,
+          y: v.y - e.deltaY,
+        }))
       }
     }
 
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [zoomAt, cancelAnim])
+  }, [cancelAnim])
 
   // Drag-to-pan. Move/up are tracked on `window` rather than via pointer
   // capture so the very first drag after a zoom (or any re-render) is picked up

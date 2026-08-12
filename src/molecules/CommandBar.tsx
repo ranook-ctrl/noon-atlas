@@ -1,17 +1,29 @@
 import { CornerBrackets } from '../components/CornerBrackets'
 
 /**
- * The bottom command bar — one strip that carries the tools and the zoom controls.
+ * The bottom bar — now zoom, history, and the handle that summons the tool dial.
  *
- * Deliberately a single combined strip rather than a separate toolbar: the zoom HUD
- * already occupied bottom-centre, and two adjacent floating bars would compete. The
- * layout mirrors the mode switch at top-centre, so the app reads as chrome pinned to
- * the middle of both edges.
+ * The tools themselves moved out to `DialMenu`, a radial menu that opens at the cursor.
+ * What stayed behind is what a ring genuinely can't hold:
  *
- * Tools that aren't wired yet are rendered `disabled` with an explanatory tooltip
- * rather than omitted or — worse — present and inert. A visible, honestly-disabled
- * control tells you the capability is planned; a control that silently does nothing is
- * the exact failure this whole project started out fixing.
+ *  · **Zoom.** `−  78%  +` is a stateful numeric readout with a stepper. A dial has
+ *    nowhere to show a live value, and burying zoom was already tried once — the plan
+ *    records the HUD being disabled and having to be brought back, because it left the
+ *    product with no zoom control anywhere.
+ *  · **Undo/redo.** High-frequency and needs to show whether there's anything to undo.
+ *    Two clicks deep in a radial menu is the wrong home for the most-repeated action
+ *    in an editor.
+ *  · **A visible trigger for the dial.** Right-click is the real gesture, but an
+ *    invisible one, and this project has already made the argument against
+ *    undiscoverable affordances once, when ⌘K got a visible search control.
+ *
+ * `TOOLS` still lives here because it is the single source of truth for the glyphs,
+ * labels, hints and disabled reasons that the dial renders.
+ *
+ * Tools that aren't wired yet stay `disabled` with an explanatory tooltip rather than
+ * omitted or — worse — present and inert. A visible, honestly-disabled control tells you
+ * the capability is planned; a control that silently does nothing is the exact failure
+ * this whole project started out fixing.
  */
 
 export type ToolId =
@@ -30,6 +42,14 @@ export type ToolId =
 export type Tool = {
   id: ToolId
   label: string
+  /**
+   * One-word form for the dial's 64px tiles.
+   *
+   * The full labels are written for a tooltip, where "Isolate neighbourhood" is the right
+   * amount of detail. On a tile they ellipsise to "ISOLATE NEIGH…", which is worse than
+   * either the long or the short version. Absent means `label` already fits.
+   */
+  short?: string
   /** Keyboard hint shown in the tooltip. */
   hint?: string
   glyph: React.ReactNode
@@ -37,106 +57,159 @@ export type Tool = {
   why?: string
 }
 
-const S = { stroke: 'currentColor', strokeWidth: 1.2, fill: 'none' } as const
+/**
+ * Glyphs.
+ *
+ * Sourced from Lucide via the `better-icons` CLI (Iconify), which is why every path here is
+ * on a 24×24 grid rather than the 14×14 the hand-drawn marks used. Three normalisations were
+ * applied to the fetched output:
+ *
+ *  · `stroke-width` dropped from Lucide's default 2 to 1.5 — 2 reads heavy against this
+ *    app's hairline borders and 1px plus-grid.
+ *  · Inner `fill="currentColor"` attributes stripped. Iconify emits them on grouped shapes
+ *    (the git-branch circles, the square-plus and grid rects), and left in place they fill
+ *    those shapes solid, turning a line icon into a blob.
+ *  · No intrinsic `width`/`height`, so size is driven by CSS — the dial renders them at 20px
+ *    and the bar's mode chip at 14px from the same source.
+ */
+const S = {
+  stroke: 'currentColor',
+  strokeWidth: 1.5,
+  fill: 'none',
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const
 
-/** 1px-stroke glyphs, matching the fit-to-frame and search marks. */
-const Glyphs = {
+/** Every glyph shares one box, so they optically match at any rendered size. */
+function Ico({ children }: { children: React.ReactNode }) {
+  return (
+    <svg viewBox="0 0 24 24" width={14} height={14} aria-hidden>
+      <g {...S}>{children}</g>
+    </svg>
+  )
+}
+
+/** Exported so the dial can reuse `close` for its exit without a second copy. */
+export const Glyphs = {
+  // lucide:mouse-pointer-2
   select: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <path d="M3 1.5L11 7L7.2 7.8L9 11.6L7.6 12.3L5.8 8.5L3 11z" {...S} strokeLinejoin="round" />
-    </svg>
+    <Ico>
+      <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />
+    </Ico>
   ),
+  // lucide:move
   pan: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <path d="M7 1.5v11M1.5 7h11M7 1.5L5 3.5M7 1.5l2 2M7 12.5l-2-2M7 12.5l2-2M1.5 7l2-2M1.5 7l2 2M12.5 7l-2-2M12.5 7l-2 2" {...S} />
-    </svg>
+    <Ico>
+      <path d="M12 2v20m3-3l-3 3l-3-3M19 9l3 3l-3 3M2 12h20M5 9l-3 3l3 3M9 5l3-3l3 3" />
+    </Ico>
   ),
+  // lucide:square-plus
   addScreen: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <rect x="1.5" y="1.5" width="7" height="11" rx="1" {...S} />
-      <path d="M11 6v5M8.5 8.5h5" {...S} strokeLinecap="square" />
-    </svg>
+    <Ico>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M8 12h8m-4-4v8" />
+    </Ico>
   ),
+  // lucide:git-branch
   drawFlow: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <circle cx="3" cy="11" r="1.6" {...S} />
-      <circle cx="11" cy="3" r="1.6" {...S} />
-      <path d="M4.2 9.8C6 8 6 8 9.8 4.2" {...S} />
-    </svg>
+    <Ico>
+      <path d="M15 6a9 9 0 0 0-9 9V3" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+    </Ico>
   ),
+  // lucide:trash-2
   delete: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <path d="M2.5 4h9M5 4V2.5h4V4M3.5 4l.6 8h5.8l.6-8" {...S} strokeLinejoin="round" />
-    </svg>
+    <Ico>
+      <path d="M10 11v6m4-6v6m5-11v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </Ico>
   ),
+  // lucide:scan
   isolate: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <circle cx="7" cy="7" r="2.2" {...S} />
-      <circle cx="7" cy="7" r="5.5" {...S} strokeDasharray="2 2" />
-    </svg>
+    <Ico>
+      <path d="M3 7V5a2 2 0 0 1 2-2h2m10 0h2a2 2 0 0 1 2 2v2m0 10v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" />
+    </Ico>
   ),
+  // lucide:filter
   filter: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <path d="M1.8 3h10.4L8 7.6v4.2L6 10.6V7.6z" {...S} strokeLinejoin="round" />
-    </svg>
+    <Ico>
+      <path d="M22 3H2l8 9.46V19l4 2v-8.54z" />
+    </Ico>
   ),
+  // lucide:map
   minimap: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <rect x="1.5" y="1.5" width="11" height="11" rx="1" {...S} />
-      <rect x="7.5" y="7.5" width="4" height="4" {...S} />
-    </svg>
+    <Ico>
+      <path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0zm.894.211v15M9 3.236v15" />
+    </Ico>
   ),
+  // lucide:grid-3x3
   snap: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <path d="M1.5 5h11M1.5 9h11M5 1.5v11M9 1.5v11" {...S} strokeOpacity="0.5" />
-      <rect x="5" y="5" width="4" height="4" {...S} />
-    </svg>
+    <Ico>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M3 9h18M3 15h18M9 3v18m6-18v18" />
+    </Ico>
   ),
+  // lucide:undo-2
   undo: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <path d="M5 3L2 6l3 3" {...S} strokeLinejoin="round" />
-      <path d="M2 6h6a4 4 0 010 8H6" {...S} />
-    </svg>
+    <Ico>
+      <path d="M9 14L4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
+    </Ico>
   ),
+  // lucide:redo-2
   redo: (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-      <path d="M9 3l3 3-3 3" {...S} strokeLinejoin="round" />
-      <path d="M12 6H6a4 4 0 000 8h2" {...S} />
-    </svg>
+    <Ico>
+      <path d="m15 14l5-5l-5-5" />
+      <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13" />
+    </Ico>
+  ),
+  // lucide:maximize
+  fit: (
+    <Ico>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3" />
+    </Ico>
+  ),
+  // lucide:x — the dial's exit
+  close: (
+    <Ico>
+      <path d="M18 6L6 18M6 6l12 12" />
+    </Ico>
   ),
 }
 
 export const TOOLS: Tool[] = [
   { id: 'select', label: 'Select', hint: 'V', glyph: Glyphs.select },
   { id: 'pan', label: 'Pan', hint: 'Space / drag', glyph: Glyphs.pan },
-  { id: 'isolate', label: 'Isolate neighbourhood', hint: 'I', glyph: Glyphs.isolate },
+  { id: 'isolate', label: 'Isolate neighbourhood', short: 'Isolate', hint: 'I', glyph: Glyphs.isolate },
   { id: 'minimap', label: 'Minimap', hint: 'O', glyph: Glyphs.minimap },
-  { id: 'snap', label: 'Snap to grid', hint: 'G', glyph: Glyphs.snap },
+  { id: 'snap', label: 'Snap to grid', short: 'Snap', hint: 'G', glyph: Glyphs.snap },
   {
     id: 'filter',
     label: 'Filter by metric',
+    short: 'Filter',
     glyph: Glyphs.filter,
     why: 'Metric filtering isn’t built yet',
   },
   {
     id: 'addScreen',
     label: 'Add screen',
+    short: 'Add',
     glyph: Glyphs.addScreen,
     why: 'Needs artboard upload, which needs a backend',
   },
   // Live. Drag from one board to another to draw an edge; the Trigger is authored in the
   // edge inspector afterward. `createFlow` shipped in the repo in Phase 0.
-  { id: 'drawFlow', label: 'Draw flow', hint: 'drag board → board', glyph: Glyphs.drawFlow },
+  { id: 'drawFlow', label: 'Draw flow', short: 'Flow', hint: 'drag board → board', glyph: Glyphs.drawFlow },
   // Live. `deleteScreen` (with its flow cascade) has been implemented in the repository
   // since Phase 0 — the blocker was never a backend, it was that undo covered only position
   // moves, so a delete would have been unrecoverable. See `AtlasEdit` in AtlasProvider.
-  { id: 'delete', label: 'Delete selection', hint: '⌫', glyph: Glyphs.delete },
+  { id: 'delete', label: 'Delete selection', short: 'Delete', hint: '⌫', glyph: Glyphs.delete },
 ]
 
 export function CommandBar({
   activeTool,
-  onSelectTool,
-  toggles,
+  dialOpen,
+  onOpenDial,
   history,
   onUndo,
   onRedo,
@@ -147,14 +220,10 @@ export function CommandBar({
   onFit,
 }: {
   activeTool: ToolId
-  onSelectTool: (id: ToolId) => void
-  /**
-   * Which non-exclusive tools are on. `select`/`pan` are modes and live in
-   * `activeTool`; isolate/minimap/snap are independent switches, so conflating them
-   * into one "active tool" would make turning the minimap on silently drop you out of
-   * whatever mode you were in.
-   */
-  toggles: Partial<Record<ToolId, boolean>>
+  /** Whether the dial is currently up, so the trigger can show it. */
+  dialOpen: boolean
+  /** Summon the dial. Called with the point to open it at, in client coordinates. */
+  onOpenDial: (at: { x: number; y: number }) => void
   history: { canUndo: boolean; canRedo: boolean }
   onUndo: () => void
   onRedo: () => void
@@ -164,39 +233,30 @@ export function CommandBar({
   onResetZoom: () => void
   onFit?: () => void
 }) {
+  const activeLabel = TOOLS.find((t) => t.id === activeTool)?.label ?? 'Tools'
+
   return (
     <div className="commandbar" onPointerDown={(e) => e.stopPropagation()}>
-      <div className="commandbar__group" role="toolbar" aria-label="Canvas tools">
-        {TOOLS.map((t) => {
-          const disabled = !!t.why
-          return (
-            <button
-              key={t.id}
-              type="button"
-              className={`commandbar__tool${!disabled ? ' has-brackets' : ''}`}
-              data-active={
-                t.id === 'select' || t.id === 'pan' || t.id === 'drawFlow'
-                  ? activeTool === t.id
-                  : !!toggles[t.id]
-              }
-              disabled={disabled}
-              aria-label={t.label}
-              aria-pressed={activeTool === t.id}
-              title={
-                disabled
-                  ? `${t.label} — ${t.why}`
-                  : t.hint
-                    ? `${t.label}  ${t.hint}`
-                    : t.label
-              }
-              onClick={() => onSelectTool(t.id)}
-            >
-              {!disabled && <CornerBrackets />}
-              {t.glyph}
-            </button>
-          )
-        })}
-      </div>
+      <button
+        type="button"
+        className="commandbar__dial has-brackets"
+        data-open={dialOpen}
+        aria-haspopup="menu"
+        aria-expanded={dialOpen}
+        title="Tools  right-click the canvas"
+        onClick={(e) => {
+          // Open above the button rather than on it, so the ring doesn't spawn half
+          // off the bottom of the viewport.
+          const r = e.currentTarget.getBoundingClientRect()
+          onOpenDial({ x: r.left + r.width / 2, y: r.top - 150 })
+        }}
+      >
+        <CornerBrackets />
+        {/* Names the current mode, so the bar still answers "what tool am I in?" now
+            that there's no lit tile to read it off. */}
+        <span className="commandbar__glyph">{TOOLS.find((t) => t.id === activeTool)?.glyph}</span>
+        <span>{activeLabel}</span>
+      </button>
 
       <span className="commandbar__divider" aria-hidden />
 
@@ -266,13 +326,7 @@ export function CommandBar({
             title="Fit all screens  1"
           >
             <CornerBrackets />
-            <svg width="13" height="13" viewBox="0 0 13 13" aria-hidden>
-              <path
-                d="M1.5 4.5V1.5H4.5M8.5 1.5H11.5V4.5M11.5 8.5V11.5H8.5M4.5 11.5H1.5V8.5"
-                {...S}
-                strokeLinecap="square"
-              />
-            </svg>
+            {Glyphs.fit}
           </button>
         )}
       </div>

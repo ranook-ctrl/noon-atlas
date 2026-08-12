@@ -57,8 +57,9 @@ export function Artboard({
 }: ArtboardProps) {
   // Priority: a selected board shows the solid edit-target ring even when it's also the
   // focused (last-added) one, so a multi-selection reads as a set rather than one board.
+  const glowSpread = width * 0.18
   const ring = selected
-    ? `0 0 0 ${width * RING * 0.7}px ${SELECT_PINK}`
+    ? `0 0 0 ${width * RING * 0.7}px ${SELECT_PINK}, 0 0 ${glowSpread}px ${glowSpread * 0.4}px rgba(247, 48, 111, 0.25)`
     : focused
       ? `0 0 0 ${width * RING}px ${FOCUS_PINK}`
       : hovered

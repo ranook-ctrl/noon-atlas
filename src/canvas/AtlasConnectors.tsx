@@ -7,7 +7,7 @@ import { useCanvasScale } from './CanvasContext'
 import { useReducedMotion } from '../hooks/useReducedMotion'
 
 /**
- * A pulse that travels the length of the selected connector, source → target.
+ * A train of pulses travelling the length of a connector, source → target.
  *
  * Replaces a marching `stroke-dasharray`. Dashes read as "this line is styled
  * differently", not as "traffic moves this way" — the motion was perpendicular to the
@@ -21,26 +21,96 @@ import { useReducedMotion } from '../hooks/useReducedMotion'
  * The tail is separate circles on the same motion path with staggered negative
  * `begin` offsets, each smaller and fainter — cheaper and steadier than animating a
  * gradient, and it degrades to nothing if SMIL is unavailable.
+ *
+ * An earlier attempt drew all of this on the grid canvas instead, routed through the
+ * mesh's vertices so the line bent with the deformed plane. It worked, and it looked
+ * wrong: right-angle routes through a 24px lattice plus overlapping alpha turned the
+ * graph into heavy white rope, and the smooth bezier that the pointer target still
+ * followed no longer matched the ink. Reverted deliberately — the geometry here is
+ * `connectorPath`'s bundled bezier, and it stays in SVG.
  */
-const PULSE_DURATION = '1.9s'
-const TAIL = [
-  { r: 3.6, opacity: 1, delay: 0 },
-  { r: 2.9, opacity: 0.55, delay: -0.07 },
-  { r: 2.2, opacity: 0.3, delay: -0.14 },
-  { r: 1.5, opacity: 0.16, delay: -0.21 },
-]
+const PULSE_DURATION = 1.9
 
-function ConnectorPulse({ pathId, scale }: { pathId: string; scale: number }) {
-  // Sized in screen pixels: a world-space pulse would balloon when zoomed in and
+/** Gradient ids for the two colours the flow ever takes. */
+const FLOW_GRAD_WHITE = 'atlas-flow-white'
+const FLOW_GRAD_PINK = 'atlas-flow-pink'
+
+/**
+ * The streak's half-length along the path and half-thickness across it, in screen px.
+ *
+ * Long and thin, and rotated to the path tangent, so it reads as a soft brightening of the
+ * line itself rather than as an object travelling along it. That distinction is the whole
+ * point of the change: hard-edged circles read as beads on a wire.
+ */
+const FLOW_LEN = 26
+const FLOW_THICK = 3.2
+
+/**
+ * The soft gradients the streaks are filled with.
+ *
+ * Rendered once for the whole layer rather than per edge — 18 edges × 3 streaks sharing two
+ * gradient definitions instead of defining 54. A radial gradient fading to fully
+ * transparent is what removes the hard edge; an `<ellipse>` with a flat fill would just be
+ * a bigger bead.
+ */
+function FlowGradients() {
+  return (
+    <defs>
+      <radialGradient id={FLOW_GRAD_WHITE}>
+        <stop offset="0%" stopColor="#ffffff" stopOpacity={0.95} />
+        <stop offset="40%" stopColor="#ffffff" stopOpacity={0.4} />
+        <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+      </radialGradient>
+      <radialGradient id={FLOW_GRAD_PINK}>
+        <stop offset="0%" stopColor={PINK} stopOpacity={1} />
+        <stop offset="40%" stopColor={PINK} stopOpacity={0.5} />
+        <stop offset="100%" stopColor={PINK} stopOpacity={0} />
+      </radialGradient>
+    </defs>
+  )
+}
+
+/**
+ * Roughly how far apart successive pulses should sit, in world units.
+ *
+ * The reference spaces its travelling energy at a fixed distance and lets the count fall
+ * out of the path length, rather than putting a fixed number of pulses on every edge.
+ * That matters: a fixed count makes a short edge look congested and a long one look
+ * empty, so the spacing — not the count — is the thing to hold constant.
+ */
+const PULSE_SPACING = 620
+const MAX_PULSES = 3
+
+function ConnectorPulse({
+  pathId,
+  scale,
+  pink,
+  count,
+  strength,
+}: {
+  pathId: string
+  scale: number
+  pink: boolean
+  count: number
+  /** Overall opacity — the selected edge glows fully, a merely-outbound one hints. */
+  strength: number
+}) {
+  // Sized in screen pixels: a world-space streak would balloon when zoomed in and
   // vanish when zoomed out, which is the opposite of a constant "signal".
   const k = 1 / scale
+  const grad = pink ? FLOW_GRAD_PINK : FLOW_GRAD_WHITE
   return (
-    <g style={{ pointerEvents: 'none' }}>
-      {TAIL.map((t, i) => (
-        <circle key={i} r={t.r * k} fill="#F7306F" opacity={t.opacity}>
+    <g style={{ pointerEvents: 'none' }} opacity={strength}>
+      {Array.from({ length: count }, (_, p) => (
+        <ellipse key={p} rx={FLOW_LEN * k} ry={FLOW_THICK * k} fill={`url(#${grad})`}>
+          {/* `rotate="auto"` turns the ellipse to the path tangent, so its long axis lies
+              along the line — that's what makes it a streak of light on the wire instead of
+              a blob crossing it. */}
           <animateMotion
-            dur={PULSE_DURATION}
-            begin={`${t.delay}s`}
+            dur={`${PULSE_DURATION}s`}
+            // Negative begin starts the animation already part-way through its cycle,
+            // so streak p is p/count of the way along the path at t=0.
+            begin={`${-(p * PULSE_DURATION) / count}s`}
             repeatCount="indefinite"
             rotate="auto"
             calcMode="spline"
@@ -49,7 +119,7 @@ function ConnectorPulse({ pathId, scale }: { pathId: string; scale: number }) {
           >
             <mpath href={`#${pathId}`} />
           </animateMotion>
-        </circle>
+        </ellipse>
       ))}
     </g>
   )
@@ -141,9 +211,18 @@ const PINK_BAD_DIM = 'rgba(247, 48, 111, 0.3)'
  */
 const DROPOFF_BAD = 55
 
-/** Stroke width in world units, from the base 1.75 up to 5 for the busiest edge. */
-const MIN_W = 1.75
-const MAX_W = 5
+/**
+ * Stroke width in **screen** px, from 1.1 for the quietest edge up to 3.4 for the busiest.
+ *
+ * Previously these were world units (1.75–5), which meant the stroke scaled with the zoom
+ * and at fit-all rendered about a quarter of a pixel wide — the whole graph faded to
+ * hairlines in exactly the view where you most need to read its structure. The repo strokes
+ * a flat 2px regardless of zoom, and that's the trait being taken here. Volume is still
+ * encoded on the same square-root ramp; only the unit changed. Divided by the live scale
+ * at render, since the SVG itself is in world coordinates.
+ */
+const MIN_W = 1.1
+const MAX_W = 3.4
 
 type EdgeState = 'normal' | 'related-out' | 'related-in' | 'selected' | 'dimmed'
 
@@ -226,11 +305,10 @@ export const AtlasConnectors = memo(function AtlasConnectors({
         const isOut = flow.from === focusedId
         const isIn = flow.to === focusedId
         const anyFocus = !!focusedId
-        const outsideIsolation =
-          !!isolatedIds && (!isolatedIds.has(flow.from) || !isolatedIds.has(flow.to))
-        const state: EdgeState = outsideIsolation
-          ? 'dimmed'
-          : selectedFlowId === flow.id
+        if (isolatedIds && (!isolatedIds.has(flow.from) || !isolatedIds.has(flow.to))) {
+          return []
+        }
+        const state: EdgeState = selectedFlowId === flow.id
             ? 'selected'
             : isOut
               ? 'related-out'
@@ -240,10 +318,21 @@ export const AtlasConnectors = memo(function AtlasConnectors({
                 ? 'dimmed'
                 : 'normal'
 
-        const ramp = maxUsers > 0 && weight ? weight.users / maxUsers : 0
-        const width = MIN_W + (MAX_W - MIN_W) * Math.sqrt(ramp)
+        // Kept as a ratio rather than a width: the width depends on the live zoom, and
+        // folding that in here would recompute all 18 edges on every wheel tick.
+        const ramp = maxUsers > 0 && weight ? Math.sqrt(weight.users / maxUsers) : 0
 
-        return [{ flow, from, to, geo, weight, state, width }]
+        // Chord between the two sockets, as a stand-in for arc length. Measuring the real
+        // length would mean a ref per path and a `getTotalLength()` call after layout;
+        // the chord is within ~15% on these curves, and it only decides how many pulses
+        // to draw, so the extra precision would buy nothing visible.
+        const span = Math.hypot(
+          geo.portTo.pad.x - geo.portFrom.pad.x,
+          geo.portTo.pad.y - geo.portFrom.pad.y,
+        )
+        const pulses = Math.max(1, Math.min(MAX_PULSES, Math.round(span / PULSE_SPACING)))
+
+        return [{ flow, from, to, geo, weight, state, ramp, pulses }]
       }),
     [flows, screenById, focusedId, selectedFlowId, weights, maxUsers, isolatedIds],
   )
@@ -258,11 +347,20 @@ export const AtlasConnectors = memo(function AtlasConnectors({
       // opt back in.
       style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none' }}
     >
+      <FlowGradients />
+
       {/* Painted first, so every edge sits behind every label. */}
-      {edges.map(({ flow, geo, weight, state, width }) => {
+      {edges.map(({ flow, geo, weight, state, ramp, pulses }) => {
+        // Constant on screen, so an edge is as readable at 15% as at 100%.
+        const width = (MIN_W + (MAX_W - MIN_W) * ramp) / scale
         const stroke = edgeStroke(state, weight?.dropOff)
         const active = state === 'selected' || hoveredFlowId === flow.id
         const selected = state === 'selected'
+        // Energy runs on every edge *leaving* the focused screen, not only the selected
+        // one: the picture stops being a diagram of lines and starts showing which way
+        // traffic is going for the whole neighbourhood at once. Inbound edges stay still,
+        // so "out of here" and "into here" are distinguishable without reading labels.
+        const flowing = selected || state === 'related-out' || hoveredFlowId === flow.id
         const pathId = `edge-path-${flow.id}`
         return (
           <g key={flow.id} className="atlas-edge" data-state={state}>
@@ -275,10 +373,23 @@ export const AtlasConnectors = memo(function AtlasConnectors({
               strokeWidth={active ? width + 1 : width}
               className="atlas-edge__line"
             />
-            {/* The travelling pulse marks the selected edge — unmistakable even when a
-                leaking edge is also pink. Omitted entirely under reduced motion,
-                because SMIL can't be switched off from CSS. */}
-            {selected && !reducedMotion && <ConnectorPulse pathId={pathId} scale={scale} />}
+            {/* The travelling glow. Soft streaks lying along the tangent, so the line
+                itself appears to brighten in waves rather than carrying beads. The selected
+                edge glows in pink at full strength so it stays unmistakable even when a
+                leaking edge is also pink; merely-outbound edges get a quiet white hint —
+                enough to read as direction, faint enough that ten at once don't turn the
+                canvas into a light show.
+                Omitted entirely under reduced motion, because SMIL can't be switched off
+                from CSS. */}
+            {flowing && !reducedMotion && (
+              <ConnectorPulse
+                pathId={pathId}
+                scale={scale}
+                count={pulses}
+                pink={selected}
+                strength={selected ? 1 : 0.4}
+              />
+            )}
             {/* Socket: a lead off the frame edge into a square pad. Rectilinear to match
                 the plus-grid and pixel type; entirely outside the frame so it never
                 overlaps the board's own focus ring. */}
