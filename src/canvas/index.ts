@@ -1,17 +1,22 @@
 export { InfiniteCanvas } from './InfiniteCanvas'
 export { CanvasSection } from './CanvasSection'
+export { AtlasBoards } from './AtlasBoards'
+export { AtlasShell } from './AtlasShell'
+export { Minimap } from './Minimap'
+export { AtlasConnectors } from './AtlasConnectors'
+export type { FlowWeight } from './AtlasConnectors'
 export {
-  AtlasBoards,
-  atlasInitialViewport,
-  atlasOverviewViewport,
-  ATLAS_SCREENS,
-  ATLAS_LINKS,
-  flowPathTo,
-  INTRO_HOLD_MS,
-  INTRO_ZOOM_MS,
-} from './AtlasBoards'
-export type { AtlasScreen } from './AtlasBoards'
+  CARD_W,
+  CONNECTOR_COLOR,
+  FRAME_H,
+  GAP,
+  LABEL_H,
+  boardsBounds,
+  connectorPath,
+  frameBox,
+} from './boardGeometry'
+export { useCanvas, useCanvasScale } from './CanvasContext'
+export type { CanvasApi } from './CanvasContext'
 export { useViewport, screenToWorld, MIN_SCALE, MAX_SCALE } from './useViewport'
 export type { Viewport, ViewportController } from './useViewport'
 export { GRID_UNIT } from './crossGrid'
-export { useUiScale, uiScaleFor, UI_REF_W, UI_REF_H } from './useUiScale'

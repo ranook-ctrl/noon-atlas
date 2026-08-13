@@ -1,66 +1,67 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { SidebarRow } from '../components/SidebarRow'
 import { MaskIcon } from '../components/MaskIcon'
 import { SegmentedControl } from './SegmentedControl'
-
-type SidebarVariant = 'default' | 'hover' | 'pod'
+import type { Project, ProjectId, ProjectKind } from '../domain/types'
 
 type SidebarProps = {
-  variant?: SidebarVariant
   /** fill the parent's height instead of the fixed 942 design height */
   fill?: boolean
   /** when set, the header sidenav icon becomes a collapse button */
   onToggle?: () => void
+  /** Every project and pod available to switch to. */
+  projects?: Project[]
+  /** The project currently open, so its row reads as selected. */
+  activeProjectId?: ProjectId | null
+  /** Tap a row → open that project. */
+  onSelectProject?: (id: ProjectId) => void
 }
 
 /** inner content width — the header frame is 295 in Figma */
 const CONTENT_W = 295
-
-const PROJECTS = [
-  'Order 2.0',
-  'Back to school',
-  'Image first navigation',
-  'Coupons Revamp V2',
-  'Prism V2',
-  'Unboxed',
-]
-
-const PODS = ['noon one', 'UGC', 'Storefront', 'Sales', 'AFS', 'Special projects']
 
 /**
  * Figma: Sidebar (component set 41:54662) — variants Default / Hover-selected / Pod.
  * Glass panel: #0A0A0A fill, 1px white/8% border, backdrop blur(4px), radius 16,
  * padding 20 / gap 20, height 942. Header ("Explore" · sidenav icon) +
  * Projects/Pods SegmentedControl + a list of SidebarRow items.
- *  - default: Projects tab, project list, nothing highlighted
- *  - hover:   Projects tab, project list, "Image first navigation" highlighted
- *  - pod:     Pods tab, pod list
+ *
+ * The rows are real navigation now: the list comes from project data and tapping a
+ * row opens that project. This replaces the old `variant` prop, whose 'hover' case
+ * hardcoded "Image first navigation" as highlighted — a static mock of selection
+ * that could never reflect what was actually open. Selection derives from
+ * `activeProjectId` instead.
+ *
+ * Projects with no graph yet are marked "empty" rather than hidden or filled with
+ * invented screens, so you know what you're getting before you click.
  */
-export function Sidebar({ variant = 'default', fill = false, onToggle }: SidebarProps) {
-  // The Projects/Pods tab is switchable: tapping a segment changes which list
-  // shows. Seeded from `variant` so the "pod" variant still opens on Pods.
-  const [tab, setTab] = useState<'projects' | 'pods'>(variant === 'pod' ? 'pods' : 'projects')
-  const isPod = tab === 'pods'
-  const rows = isPod ? PODS : PROJECTS
-  const highlighted = variant === 'hover' && !isPod ? 'Image first navigation' : null
+export function Sidebar({
+  fill = false,
+  onToggle,
+  projects = [],
+  activeProjectId,
+  onSelectProject,
+}: SidebarProps) {
+  // Open on whichever tab holds the active project, so expanding the sidenav
+  // doesn't show a list the current selection isn't in.
+  const activeKind = projects.find((p) => p.id === activeProjectId)?.kind ?? 'project'
+  const [tab, setTab] = useState<ProjectKind>(activeKind)
+
+  const rows = useMemo(() => projects.filter((p) => p.kind === tab), [projects, tab])
 
   return (
     <div
+      className="tool-surface"
       style={{
         display: 'inline-flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: 20,
-        padding: 20,
+        gap: 18,
+        padding: 16,
         height: fill ? '100%' : 942,
         maxHeight: fill ? '100%' : undefined,
         overflow: fill ? 'hidden' : undefined,
         boxSizing: 'border-box',
-        background: '#0A0A0A',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        borderRadius: 16,
-        backdropFilter: 'blur(4px)',
-        WebkitBackdropFilter: 'blur(4px)',
       }}
     >
       {/* Header */}
@@ -83,15 +84,8 @@ export function Sidebar({ variant = 'default', fill = false, onToggle }: Sidebar
             type="button"
             onClick={onToggle}
             aria-label="Collapse"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 0,
-              border: 0,
-              background: 'transparent',
-              cursor: 'pointer',
-            }}
+            className="tool-control"
+            style={{ width: 30, padding: 0 }}
           >
             <MaskIcon src="/icons/sidenav.svg" width={24} height={24} color="#454545" />
           </button>
@@ -101,19 +95,55 @@ export function Sidebar({ variant = 'default', fill = false, onToggle }: Sidebar
       </div>
 
       {/* Body */}
-      <div style={{ display: 'flex', flexDirection: 'column', alignSelf: 'stretch', gap: 16 }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignSelf: 'stretch',
+          gap: 16,
+          minHeight: 0,
+        }}
+      >
         <SegmentedControl
           width="100%"
           segments={[
-            { label: 'Projects', selected: !isPod },
-            { label: 'Pods', selected: isPod },
+            { label: 'Projects', selected: tab === 'project' },
+            { label: 'Pods', selected: tab === 'pod' },
           ]}
-          onSelect={(i) => setTab(i === 0 ? 'projects' : 'pods')}
+          onSelect={(i) => setTab(i === 0 ? 'project' : 'pod')}
         />
-        <div style={{ display: 'flex', flexDirection: 'column', alignSelf: 'stretch' }}>
-          {rows.map((label) => (
-            <SidebarRow key={label} label={label} selected={label === highlighted} />
-          ))}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignSelf: 'stretch',
+            overflowY: 'auto',
+            minHeight: 0,
+          }}
+        >
+          {rows.length === 0 ? (
+            <span
+              className="pixel-line"
+              style={{
+                padding: '12px 8px',
+                fontSize: 13,
+                lineHeight: '20px',
+                color: 'rgba(255, 255, 255, 0.4)',
+              }}
+            >
+              Nothing here yet
+            </span>
+          ) : (
+            rows.map((p) => (
+              <SidebarRow
+                key={p.id}
+                label={p.name}
+                selected={p.id === activeProjectId}
+                meta={p.seeded ? undefined : 'empty'}
+                onClick={onSelectProject ? () => onSelectProject(p.id) : undefined}
+              />
+            ))
+          )}
         </div>
       </div>
     </div>

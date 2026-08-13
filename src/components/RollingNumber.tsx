@@ -47,16 +47,23 @@ export function RollingNumber({ value, className, style, spin = false, duration 
   )
 }
 
-/** A 0–9 reel that eases to `digit` whenever it changes (roll-on-change). */
+/**
+ * A 0–9 reel that eases to `digit` whenever it changes (roll-on-change).
+ *
+ * The timing lives in CSS (`.rolling-reel`) rather than inline so that
+ * `prefers-reduced-motion` can switch it off in one place. It was 920ms, which is
+ * long enough that a number is still moving while you're trying to read it — and
+ * this fires on *every* focus change, not just on load.
+ */
 function RollDigit({ digit }: { digit: number }) {
   return (
     <span style={{ display: 'inline-block', height: '1em', overflow: 'hidden' }}>
       <span
+        className="rolling-reel"
         style={{
           display: 'flex',
           flexDirection: 'column',
           transform: `translateY(-${digit}em)`,
-          transition: 'transform 920ms cubic-bezier(0.16, 1, 0.3, 1)',
           willChange: 'transform',
         }}
       >
@@ -97,12 +104,18 @@ function SpinDigit({ digit, duration, delay }: { digit: number; duration: number
   return (
     <span style={{ display: 'inline-block', height: '1em', overflow: 'hidden' }}>
       <span
+        className="rolling-reel rolling-reel--spin"
         style={{
           display: 'flex',
           flexDirection: 'column',
           transform: go ? 'translateY(0)' : `translateY(-${start}em)`,
-          transition: go ? `transform ${duration}ms cubic-bezier(0.12, 0.72, 0.2, 1)` : 'none',
-          transitionDelay: go ? `${delay}ms` : '0ms',
+          // Delay folded into the shorthand rather than set as a separate
+          // `transitionDelay`: mixing a shorthand with one of its own longhands
+          // makes React warn (updating the shorthand can clobber the longhand),
+          // and the second time value in the shorthand *is* the delay.
+          transition: go
+            ? `transform ${duration}ms cubic-bezier(0.12, 0.72, 0.2, 1) ${delay}ms`
+            : 'none',
           willChange: 'transform',
         }}
       >

@@ -14,6 +14,64 @@
 
 :root {
   --atlas-bg: #0b0b0d;
+
+  /* ── Design tokens ──────────────────────────────────────────────────────
+     These values are currently re-typed as inline literals across ~15
+     components. Defining them here is step one; components adopt them as they
+     get touched. Deliberately NOT doing a wholesale inline-style → Tailwind
+     migration — a 30-file restyle buys nothing a viewer can see. */
+
+  /* noon pink, and the opacities the design actually uses it at */
+  --noon-pink: #f7306f;
+  --noon-pink-40: rgba(247, 48, 111, 0.4);
+  --noon-pink-20: rgba(247, 48, 111, 0.2);
+  --noon-pink-10: rgba(247, 48, 111, 0.1);
+
+  /* Raised surfaces — white at low alpha over the black plane. */
+  --surface-1: rgba(255, 255, 255, 0.02);
+  --surface-2: rgba(255, 255, 255, 0.04);
+  --surface-3: rgba(255, 255, 255, 0.08);
+  /* The panel fill. Everything added from here on uses this flat surface rather
+     than a blurred one — same value the Sidebar has always used. */
+  --panel-solid: #0a0a0a;
+
+  /* Hairlines */
+  --hairline-1: rgba(255, 255, 255, 0.06);
+  --hairline-2: rgba(255, 255, 255, 0.08);
+  --hairline-3: rgba(255, 255, 255, 0.12);
+
+  /* Text */
+  --text-1: #ffffff;
+  --text-2: rgba(255, 255, 255, 0.8);
+  --text-3: rgba(255, 255, 255, 0.5);
+  --text-4: rgba(255, 255, 255, 0.4);
+
+  /* Radii */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  /* Blur. Note: eight simultaneous backdrop-filters compositing over a canvas
+     that repaints every pan frame is the likeliest jank source on integrated
+     GPUs — consolidating these is a tracked polish item. */
+  --blur-sm: 4px;
+  --blur-md: 20px;
+  --blur-lg: 40px;
+
+  /* ── Tool surface ──────────────────────────────────────────────────────
+     The shared look for chrome: a near-opaque panel over a light blur. Subtler
+     than the original glass (blur 40px at 4% white) so the plane reads through
+     it without the chrome dissolving into it. Every panel and bar uses these
+     three together, which is what makes the app feel like one toolkit. */
+  /* Tint low enough that the blur is actually perceptible — at 82% the glass was
+     opaque enough that a working blur would still have looked like a flat panel. */
+  --tool-fill: rgba(10, 10, 12, 0.58);
+  --tool-blur: 22px;
+  --tool-border: rgba(255, 255, 255, 0.1);
+  --tool-radius: 12px;
+  /* Inner control size — tool buttons, segment heights, row heights. */
+  --control-h: 30px;
+  --control-radius: 7px;
 }
 
 html,
@@ -66,20 +124,37 @@ body {
 
 /* The app chrome floats above the plane. pointer-events:none lets a drag in the
    empty gaps fall through to the canvas so it still pans; each widget opts back
-   in for itself.
-
-   Responsive scaler: the chrome is laid out in a "design space" sized
-   viewport ÷ --ui-scale, then scaled by --ui-scale back to exactly fill the
-   viewport. This scales every widget, its text and its edge insets uniformly
-   while keeping them pinned to the true viewport edges on any device. */
+   in for itself. */
 .dashboard__chrome {
   position: fixed;
   top: 0;
   left: 0;
-  width: calc(100vw / var(--ui-scale, 1));
-  height: calc(100vh / var(--ui-scale, 1));
-  transform: scale(var(--ui-scale, 1));
-  transform-origin: top left;
+  width: 100vw;
+  height: 100vh;
+  /*
+   * NOT SCALED — deliberately no `transform`, no `zoom`, no filter here.
+   *
+   * The chrome used to be authored against a 1600×1000 reference and scaled uniformly
+   * to fill the viewport: first with `transform: scale()`, then with `zoom`. That is why
+   * no panel ever blurred. Both establish a *backdrop root*, so every `backdrop-filter`
+   * inside this wrapper sampled an empty backdrop and silently did nothing — swapping
+   * `transform` for `zoom` traded one cause for an identical one.
+   *
+   * Measured rather than assumed: forcing `zoom: 1` made the artboard behind the
+   * inspector go soft, and under identical blur settings the command palette (which
+   * renders outside this wrapper) blurred properly while the inspector stayed sharp
+   * enough to read the app's nav icons straight through it.
+   *
+   * Every glass surface in the product lives in here, so "move the glass out of the
+   * scaler" and "stop scaling" are the same change. The chrome now renders 1:1. The cost
+   * is that it no longer adapts to viewport size — the scale ranged 0.80 at 1280×800 to
+   * 1.40 at 2560×1440. The palette, shortcut sheet and edge card already rendered 1:1,
+   * so this makes the chrome consistent rather than less so.
+   *
+   * If anything in this subtree ever needs a transform again, it must not be an ancestor
+   * of a `backdrop-filter`. For centring, use inset + `margin-inline: auto` — see
+   * `.dashboard__switch`.
+   */
   z-index: 100;
   pointer-events: none;
 }
@@ -106,8 +181,14 @@ body {
 .dashboard__switch {
   position: absolute;
   top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  /* Centred WITHOUT a transform. `left: 50%; transform: translateX(-50%)` is the
+     usual idiom, but a transform establishes a backdrop root, so every
+     backdrop-filter inside this widget had an empty backdrop and silently did
+     nothing. `inset-inline: 0` + `width: fit-content` + `margin-inline: auto`
+     centres identically and leaves no transform on the chain. */
+  inset-inline: 0;
+  width: fit-content;
+  margin-inline: auto;
 }
 
 /* Right inspector panel — sticks to the right, 20px from the edge, and fills the
@@ -117,17 +198,125 @@ body {
    in, the close icon slides it out, focusing an artboard slides it back in.
    Only the transform animates (no opacity fade), so the glass blur is already
    present as it slides — it doesn't fade in after settling. */
+/*
+ * Slides on `right`, NOT on `transform`.
+ *
+ * This is why the panel never looked like it had any blur: a `transform` establishes a
+ * backdrop root, so `backdrop-filter` on anything inside it has an empty backdrop to
+ * filter and silently does nothing. The panel measured identically to Explore —
+ * same fill, same blur value — but Explore only carries a transform for the 180ms of
+ * its entrance animation, after which its blur works, whereas this one held
+ * `translateX` permanently and so was never actually blurring anything.
+ *
+ * Animating `right` costs layout instead of compositing, but it's a 500ms slide on one
+ * element, and the alternative is a blur property that lies.
+ */
 .dashboard__right-nav {
-  position: absolute;
-  top: 62px;
-  right: 20px;
-  bottom: 20px;
-  transform: translateX(calc(100% + 20px));
-  transition: transform 500ms ease-in-out;
+  /* Panel width — the camera inset in Dashboard mirrors this so a focused screen lands in
+     the free space to the LEFT of the panel rather than behind it. */
+  /* One column now, not two: 299 content + 40 padding. */
+  --rightnav-w: 340px;
+  position: fixed;
+  right: calc(-1 * (var(--rightnav-w) + 40px));
+  /*
+   * Vertically centred WITHOUT a transform — for exactly the reason the slide above was
+   * moved off `transform`, which is a mistake this file has now made twice.
+   *
+   * `top: 50%; transform: translateY(-50%)` was left here after the horizontal fix, and a
+   * transform establishes a backdrop root whichever axis it moves on. So the panel's
+   * `backdrop-filter` was *still* sampling an empty backdrop and silently doing nothing —
+   * the blur measured correct (`blur(22px)`, right fill, right value) and still rendered
+   * as plain dark fill. That is the third time this exact symptom has been chased here,
+   * and it is why the rule below is stated as a constraint rather than a preference.
+   *
+   * `inset-block: 0` + a definite `height` + `margin-block: auto` is the over-constrained
+   * margin rule: the leftover space is split equally between the auto margins, which
+   * centres identically and leaves nothing on the ancestor chain. Same technique as
+   * `.dashboard__switch`, one axis over.
+   */
+  inset-block: 0;
+  /* Hug the content, capped to the viewport. */
+  height: fit-content;
+  margin-block: auto;
+  max-height: calc(100vh - 82px);
+  transition: right 500ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .dashboard__right-nav.is-open {
-  transform: translateX(0);
+  right: 20px;
+}
+
+/* Two columns: the screen preview on the left, its details/stats on the right. */
+.rightnav {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: var(--rightnav-w);
+  /* A definite cap (not `100%`, which resolves to `none` under the fit-content wrapper and
+     lets the card overflow on short viewports). Matches the wrapper's cap exactly. */
+  max-height: calc(100vh - 82px);
+  padding: 20px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* A clearly-bounded card, not a faint tint. The translucent tool fill is almost
+   invisible over the near-black canvas at this size, so the panel read as loose floating
+   elements; a stronger fill + shadow makes it a distinct surface. */
+.tool-surface.rightnav {
+  background: rgba(16, 16, 20, 0.92);
+  border-color: rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.rightnav__preview {
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
+.rightnav__content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.rightnav__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 2px;
+  flex: 0 0 auto;
+}
+
+.rightnav__close {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.rightnav__close:disabled {
+  cursor: default;
+}
+
+/* The stat/neighbour area scrolls within the right column, so the preview and header
+   stay put while a long list moves. */
+.rightnav__pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* Breadcrumb trail, bottom-left (frame x:20). */
@@ -148,6 +337,13 @@ body {
   bottom: 72px;
   transform-origin: top left;
   animation: sidenav-morph 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Belt and braces: make sure nothing leaves a lingering transform on a panel that
+   wants to blur. `none` is the value that restores a real backdrop. */
+.dashboard__sidenav:not(.is-closing) > div,
+.dashboard__right-nav > * {
+  transform: none;
 }
 
 @keyframes sidenav-morph {
@@ -175,7 +371,10 @@ body {
    displays, so it stays pointer-transparent and never steals the hover. */
 .dashboard__section-stats {
   position: absolute;
-  right: 375px;
+  /* Shares --section-card-inset with Dashboard's SECTION_CARD_INSET. This was the
+     literal `375` typed independently here and in the component, so the pink leader
+     line would silently misalign the first time either moved. */
+  right: var(--section-card-inset, 375px);
   pointer-events: none;
   animation: stats-in 140ms ease;
   transition: top 300ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -252,66 +451,3502 @@ body {
   will-change: transform;
 }
 
-/* Screen-space overlay for vector connectors. Deliberately NOT a composited /
-   rasterised layer (no will-change/3D transform), so SVG drawn here re-renders
-   crisply at every zoom level instead of being bitmap-scaled with the world. */
-.atlas-canvas__links {
-  position: absolute;
-  inset: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-
 /* A section mounted onto the canvas, positioned in world space. */
 .atlas-section {
   position: absolute;
 }
 
 /* ── Zoom controls ─────────────────────────────────────────────────────── */
+/* The original rules that lived here were removed rather than overridden. They
+   set a generic dark-grey translucent pill in the browser default font — the
+   reason the HUD was switched off on the dashboard in the first place — and
+   layering new rules on top left its blur and #e7e9ee text leaking through.
+   The replacement lives with the other interaction styles further down. */
+
+/* ── Error boundary fallback ───────────────────────────────────────────────── */
+/* Deliberately plain and dependency-free: this renders when something else in
+   the tree has already failed, so it must not rely on anything that could
+   itself be the thing that broke. */
+.atlas-error__action {
+  font-family: "Geist Pixel", sans-serif;
+  font-variation-settings: "ELSH" 0;
+  font-size: 13px;
+  line-height: 20px;
+  padding: 8px 16px;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.atlas-error__action:hover {
+  background: var(--surface-3);
+}
+
+.atlas-error__action:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: 2px;
+}
+
+/* ── Interactive affordances ───────────────────────────────────────────────── */
+.sidebar-row.is-interactive:hover,
+.neighbour-row.is-interactive:hover {
+  background: var(--surface-3);
+}
+
+.sidebar-row.is-interactive:focus-visible,
+.neighbour-row.is-interactive:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: -1px;
+}
+
+/* ── The plane with nothing on it (loading / empty / error) ────────────────── */
+/* Keeps the cross-grid so the surface still reads as the atlas. A plain black
+   rectangle looks broken; this looks empty, which is the truth. */
+.atlas-shell {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.atlas-shell__content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.atlas-shell__content > button {
+  pointer-events: auto;
+}
+
+.atlas-shell__title {
+  font-size: 20px;
+  line-height: 28px;
+  color: var(--text-1);
+}
+
+.atlas-shell__detail {
+  max-width: 420px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-3);
+}
+
+/* ── Screens mode: the structured browser ─────────────────────────────────── */
+/* A taxonomy rail plus a content pane, after Mobbin. Replaced a flat grid of metric
+   cards whose 190px cropped thumbnail meant you could never actually see a screen.
+   Scrolls internally; the fixed chrome floats above, so the top padding clears the
+   top bar. */
+.browser {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  /* Fixed rail, fluid content. `auto` on the rail would let a long journey name
+     widen it and reflow the grid, so the tree is given a budget and ellipsises. */
+  grid-template-columns: 264px minmax(0, 1fr);
+  background: #000;
+}
+
+.browser__rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Clears the fixed top bar, which floats over this pane rather than displacing it. */
+  padding: 72px 12px 32px;
+  border-right: 1px solid var(--hairline-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Search *field*: icon + input + clear, as one bordered control. */
+.browser__search-field {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--control-h);
+  margin: 0 4px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-3);
+  border-radius: var(--control-radius);
+  transition: border-color 120ms ease;
+}
+.browser__search-field:focus-within {
+  border-color: var(--pink, #f7306f);
+}
+.browser__search-icon {
+  flex: 0 0 auto;
+  color: var(--text-4, rgba(255, 255, 255, 0.4));
+}
+.browser__search-field:focus-within .browser__search-icon {
+  color: var(--text-2, rgba(255, 255, 255, 0.7));
+}
+.browser__search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-1);
+  outline: none;
+}
+/* Kill the native WebKit search decorations so our clear button is the only one. */
+.browser__search::-webkit-search-cancel-button,
+.browser__search::-webkit-search-decoration {
+  appearance: none;
+  -webkit-appearance: none;
+}
+.browser__search-clear {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.browser__search-clear:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.browser__search::placeholder {
+  color: var(--text-4);
+}
+
+.browser__search:focus {
+  border-color: var(--noon-pink-40);
+}
+
+.browser__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 72px 28px 56px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.browser__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+
+.browser__head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Two lines, mirroring Mobbin's stacked "Showing / 110 flows". The newline is a
+   real `\A` in the string, so `pre-line` rather than a second element. */
+.browser__showing {
+  white-space: pre-line;
+  text-align: right;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.browser__grid {
+  display: grid;
+  /* 200px keeps a 400×865 artboard legible; below ~170 the UI inside it turns to
+     texture and the grid stops being a way to recognise a screen. */
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 22px;
+  align-items: start;
+}
+
+.browser__strips {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.browser__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 96px 0;
+  color: var(--text-3);
+}
+
+/* ── Category tree ────────────────────────────────────────────────────────── */
+.cat-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cat-tree__group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cat-tree__children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Padding-left is set inline per depth so the hover wash spans the full rail; an
+   indented wrapper would leave a dead gutter the highlight can't reach. */
+.cat-tree__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 28px;
+  padding: 5px 10px 5px 8px;
+  box-sizing: border-box;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--control-radius);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.cat-tree__row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1);
+}
+
+.cat-tree__row:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: -1px;
+}
+
+.cat-tree__row--cat {
+  color: var(--text-2);
+}
+
+.cat-tree__row--all {
+  margin-bottom: 6px;
+}
+
+/* Selection is a left marker plus a wash, not a filled pill: the rail can have a
+   category and a journey both visually implicated, and two pills would compete. */
+.cat-tree__row.is-selected {
+  background: rgba(247, 48, 111, 0.1);
+  color: var(--text-1);
+  box-shadow: inset 2px 0 0 var(--noon-pink);
+}
+
+.cat-tree__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 17px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cat-tree__count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.cat-tree__chevron {
+  flex: 0 0 auto;
+  color: var(--text-4);
+  transition: transform 160ms var(--ease-out);
+}
+
+.cat-tree__chevron.is-open {
+  transform: rotate(90deg);
+}
+
+/* Journeys sit under a hairline stem so a run of them reads as children of the
+   category above rather than as more categories. */
+.cat-tree__row--journey {
+  font-size: 12px;
+}
+
+.cat-tree__provisional {
+  flex: 0 0 auto;
+  width: 4px;
+  height: 4px;
+  background: var(--noon-pink);
+  opacity: 0.65;
+  border-radius: 50%;
+}
+
+.cat-tree__empty {
+  margin: 8px 10px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-4);
+}
+
+/* ── Screen plate ─────────────────────────────────────────────────────────── */
+/* The artboard whole, at its own aspect. Every number is deferred to hover, because
+   this surface exists to be scanned — a tile that is half chrome makes you read
+   captions instead of looking at screens. */
+.screen-plate {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.screen-plate__frame {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  /* The artboards are exactly 400×865, so the box matches and `cover` cannot crop. */
+  aspect-ratio: 400 / 865;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-md);
+  transition: border-color 140ms ease, transform 140ms var(--ease-out);
+}
+
+.screen-plate:hover .screen-plate__frame {
+  border-color: var(--hairline-3);
+  transform: translateY(-3px);
+}
+
+.screen-plate:focus-visible .screen-plate__frame {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: 2px;
+}
+
+.screen-plate.is-selected .screen-plate__frame {
+  border-color: var(--noon-pink-40);
+}
+
+.screen-plate__frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* `cover` on a matched aspect ratio, so this crops nothing — it just guarantees
+     full bleed if an asset is ever a pixel off. */
+  object-fit: cover;
+  object-position: top center;
+  /* Full opacity at rest, unlike the map's boards. On the map a board is a node in a
+     diagram and dimming keeps the connectors readable; here it's the subject. */
+  opacity: 1;
+}
+
+/* Step index inside a filmstrip. Top-left, above the info panel's scrim. */
+.screen-plate__step {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 2px 5px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-1);
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid var(--hairline-3);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mounted always, revealed on hover — mounting on hover would leave the first frame
+   of the transition with nothing to animate, so it would pop instead of fading. */
+.screen-plate__info {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 64px 12px 12px;
+  /* Gradient rather than a flat panel: the scrim has to make text legible over an
+     unknown screenshot without hiding the part of the screen you're pointing at.
+     Weighted hard to the bottom because that's where these artboards put their nav
+     bar — bright icons on white, which at the first attempt's 0.8 midpoint left the
+     ATC and GMV row sitting unreadably on top of them. */
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.97) 0%,
+    rgba(0, 0, 0, 0.95) 35%,
+    rgba(0, 0, 0, 0.72) 62%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 140ms ease, transform 180ms var(--ease-out);
+  pointer-events: none;
+}
+
+.screen-plate:hover .screen-plate__info,
+.screen-plate:focus-visible .screen-plate__info {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+
+.screen-plate__name {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-1);
+}
+
+/* Two even columns, every metric at one weight. This replaced a 19px headline sitting
+   above a row of small supporting figures — type that size reads as "this is the
+   answer", which overstated Users-per-day against the other six. */
+.screen-plate__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--hairline-2);
+}
+
+.screen-plate__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.screen-plate__stat-label {
+  font-size: 9px;
+  line-height: 12px;
+  color: var(--text-4);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.screen-plate__stat-value {
+  font-size: 12px;
+  line-height: 16px;
+  /* A step brighter than the old supporting value, since nothing outranks these now. */
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Journey filmstrip ────────────────────────────────────────────────────── */
+/* Fixed plate height and horizontal scroll, so a 2-screen and a 14-screen journey
+   render at the same scale and can be compared. Wrapping into a grid would lose the
+   strip's one essential property: reading order is journey order. */
+.strip {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.strip__scroller {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  padding-bottom: 10px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-color: var(--hairline-3) transparent;
+}
+
+.strip__cell {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* 208px → ~450px tall, so a strip plus its caption clears 520px and two journeys fit
+   in the stacked overview. At the 268px this started as, one plate was 580px tall and
+   the caption — the journey's name and screen count — sat below the fold, which made
+   the overview a wall of anonymous phones. */
+.strip__cell .screen-plate {
+  width: 208px;
+}
+
+/* The connector between consecutive steps. A chevron drawn in CSS rather than an
+   SVG import: it's two borders, and the gap variant only differs by colour. */
+.strip__link {
+  flex: 0 0 auto;
+  position: relative;
+  width: 26px;
+  height: 1px;
+  margin: 0 2px;
+  background: var(--hairline-3);
+}
+
+.strip__link::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  right: 0;
+  width: 5px;
+  height: 5px;
+  border-top: 1px solid var(--hairline-3);
+  border-right: 1px solid var(--hairline-3);
+  transform: rotate(45deg);
+}
+
+/* A pair the graph has no edge for. Dashed and pink, because the honest reading is
+   "the taxonomy and the atlas disagree here", not "this is a normal step". */
+.strip__link.is-gap {
+  background: transparent;
+  border-top: 1px dashed var(--noon-pink);
+  opacity: 0.8;
+}
+
+.strip__link.is-gap::after {
+  border-color: var(--noon-pink);
+}
+
+.strip__caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.strip__caption-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.strip__title {
+  margin: 0;
+  font-size: 17px;
+  line-height: 23px;
+  font-weight: 400;
+  color: var(--text-1);
+}
+
+.strip__provisional {
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--noon-pink);
+  opacity: 0.75;
+}
+
+.strip__count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Interaction craft
+   Motion durations live on tokens so the reduced-motion block at the bottom of
+   this file can neutralise all of them in one place.
+   ══════════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-reel: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-hover: 120ms;
+  --dur-state: 200ms;
+  --dur-roll: 420ms;
+}
+
+/* ── Rolling number reels ─────────────────────────────────────────────────── */
+/* Was 920ms inline. That's long enough that a value is still moving while you're
+   reading it, and it fires on every focus change — not just on load. */
+.rolling-reel {
+  transition: transform var(--dur-roll) var(--ease-reel);
+}
+/* The mount spin sets its own (much longer) transition inline; it's a deliberate
+   one-off load flourish, so it must not inherit the short roll. */
+.rolling-reel--spin {
+  transition: none;
+}
+
+/* ── Artboards on the plane ───────────────────────────────────────────────── */
+/* The primary object in the app had no hover feedback at all before this — only
+   `cursor: grab`. A board now lifts slightly, and grows a shadow while dragged so
+   it reads as picked up rather than teleporting under the cursor. */
+/* One composed transform, assembled from custom properties.
+   Every contributing state (hover lift, drag scale, velocity tilt) sets its own
+   variable rather than writing `transform`, so they compose instead of overwriting one
+   another — which is what happened before, when `:hover`'s translate and
+   `.is-dragging`'s scale were mutually exclusive by construction.
+
+   `perspective` here is safe and deliberate: it establishes a backdrop root, so it must
+   never sit above a `backdrop-filter` surface (see the standing constraint). A board
+   contains only an image and a label; every glass panel in the app is a sibling in the
+   1:1 chrome, not a descendant of the plane. */
+.atlas-board {
+  --board-lift: 0px;
+  --board-scale: 1;
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  cursor: grab;
+  touch-action: none;
+  transform: perspective(900px) translateY(var(--board-lift)) scale(var(--board-scale))
+    rotateX(var(--tilt-x)) rotateY(var(--tilt-y));
+  transition: transform var(--dur-hover) var(--ease-out);
+}
+
+.atlas-board:hover {
+  --board-lift: -2px;
+}
+
+.atlas-board.is-dragging,
+.atlas-board.is-flying {
+  /* Just above 1 — enough to feel lifted, not enough to look like a zoom. */
+  --board-scale: 1.02;
+  z-index: 2;
+}
+
+.atlas-board.is-dragging {
+  cursor: grabbing;
+}
+
+/* While the tilt is being driven at 60fps the transition has to be short, or the
+   easing smears every frame into the next and the board lags the cursor. A little
+   smoothing is still wanted — velocity estimates are noisy — so it isn't zero. */
+.atlas-board.is-dragging,
+.atlas-board.is-flying {
+  transition: transform 90ms linear;
+}
+
+.atlas-board__frame {
+  transition:
+    box-shadow var(--dur-state) var(--ease-out),
+    filter var(--dur-hover) var(--ease-out);
+}
+
+/* The shadow deepens for the whole time the board is off the plane — through the throw,
+   not just while the pointer is down — so it doesn't visibly land the instant you let go
+   and then keep moving. */
+.atlas-board.is-dragging .atlas-board__frame,
+.atlas-board.is-flying .atlas-board__frame {
+  filter: drop-shadow(0 18px 32px rgba(0, 0, 0, 0.65));
+}
+
+.atlas-board__label {
+  transition: color var(--dur-hover) var(--ease-out);
+}
+
+.atlas-board__frame img {
+  transition: opacity var(--dur-state) var(--ease-out);
+}
+
+/* ── Connectors ───────────────────────────────────────────────────────────── */
+/* Width encodes volume, tint encodes drop-off, and opacity encodes relevance to
+   the focused screen. Transitioning stroke means focus changes cross-fade rather
+   than snapping between two dense line drawings. */
+.atlas-edge__line {
+  transition:
+    stroke var(--dur-state) var(--ease-out),
+    stroke-width var(--dur-hover) var(--ease-out);
+}
+
+.atlas-edge circle,
+.atlas-edge polygon {
+  transition: fill var(--dur-state) var(--ease-out);
+}
+
+/* Direction of travel is carried by the travelling pulse in AtlasConnectors, not by
+   a dashed stroke. Dashes read as "this line is styled differently" rather than
+   "traffic moves this way" — the motion was perpendicular to the meaning. */
+
+/* ── Zoom HUD ─────────────────────────────────────────────────────────────── */
+/* Rebuilt in the house glass language (the previous generic grey chrome is why it
+   was switched off), pinned bottom-centre to mirror the mode switch top-centre. */
 .atlas-hud {
   position: absolute;
-  left: 16px;
-  bottom: 16px;
-  display: flex;
-  align-items: stretch;
+  bottom: 20px;
+  /* Transform-free centring — see .dashboard__switch. This element carries the blur
+     itself, so a translate here would have disabled its own backdrop-filter. */
+  inset-inline: 0;
+  width: fit-content;
+  margin-inline: auto;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
   gap: 2px;
-  padding: 2px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  background: rgba(20, 20, 24, 0.7);
-  backdrop-filter: blur(8px);
-  color: #e7e9ee;
-  font-size: 13px;
-  user-select: none;
+  padding: 4px;
+  background: var(--panel-solid);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-md);
 }
 
 .atlas-hud__btn,
 .atlas-hud__value {
-  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 8px;
   border: 0;
-  background: transparent;
-  color: #e7e9ee;
-  cursor: pointer;
   border-radius: 7px;
-  transition: background 120ms ease;
+  background: transparent;
+  color: var(--text-2);
+  font-family: "Geist Pixel", sans-serif;
+  font-variation-settings: "ELSH" 0;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
 }
 
 .atlas-hud__btn {
   width: 28px;
-  height: 28px;
-  font-size: 17px;
-  line-height: 1;
+  padding: 0;
 }
 
 .atlas-hud__value {
   min-width: 52px;
-  height: 28px;
+  /* Tabular so the reading doesn't shift the buttons as digits change width. */
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-1);
+}
+
+.atlas-hud__glyph {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .atlas-hud__btn:hover,
 .atlas-hud__value:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.atlas-hud__btn:focus-visible,
+.atlas-hud__value:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: -1px;
+}
+
+.atlas-hud__divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--hairline-3);
+}
+
+/* ── Top bar right cluster ────────────────────────────────────────────────── */
+.dashboard__topbar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── Edge inspector ───────────────────────────────────────────────────────── */
+/* Occupies the same slot as the screen inspector, so it matches its glass. */
+.edge-inspector {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 339px;
+  padding: 20px;
+  box-sizing: border-box;
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--panel-solid);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-lg);
+}
+
+.edge-inspector__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.edge-inspector__eyebrow {
+  font-size: 13px;
+  line-height: 20px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.edge-inspector__close {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--dur-hover) var(--ease-out);
+}
+
+.edge-inspector__close:hover {
+  background: var(--surface-3);
+}
+
+.edge-inspector__route {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.edge-inspector__endpoint {
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-3);
+  border-radius: 7px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    border-color var(--dur-hover) var(--ease-out);
+}
+
+.edge-inspector__endpoint:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.edge-inspector__endpoint.is-target {
+  border-color: var(--noon-pink-40);
+  color: var(--noon-pink);
+}
+
+.edge-inspector__endpoint:disabled {
+  cursor: default;
+}
+
+.edge-inspector__endpoint:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: 2px;
+}
+
+/* Drop-off leads the panel: it's the reason you clicked the edge. Its severity
+   bands are the same thresholds the connector tinting uses, so panel and canvas
+   never disagree about whether something looks bad. */
+.edge-inspector__hero {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  border: 1px solid var(--hairline-2);
+}
+
+.edge-inspector__hero[data-severity='bad'] {
+  background: var(--noon-pink-10);
+  border-color: var(--noon-pink-40);
+}
+
+.edge-inspector__hero-value {
+  font-size: 30px;
+  line-height: 1;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.edge-inspector__hero[data-severity='bad'] .edge-inspector__hero-value {
+  color: var(--noon-pink);
+}
+
+.edge-inspector__hero-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.edge-inspector__hero-label {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-3);
+}
+
+.edge-inspector__delta {
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-4);
+}
+
+/* Sentiment, not sign: drop-off rising is bad, traffic rising is good. Pink is
+   reserved for "worse" so it keeps meaning one thing across the whole product. */
+.edge-inspector__delta[data-sentiment='bad'] {
+  color: var(--noon-pink);
+}
+
+.edge-inspector__delta[data-sentiment='good'] {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.inspector__pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.inspector__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  border: 1px solid var(--hairline-1);
+}
+
+.inspector__stat-value {
+  font-size: 18px;
+  line-height: 24px;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.inspector__stat-label {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-4);
+}
+
+.inspector__rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.inspector__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--hairline-1);
+}
+
+.inspector__row-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-3);
+  /* Signals there's a definition on hover — these column names are opaque. */
+  cursor: help;
+}
+
+.inspector__row-value {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.edge-inspector__loading {
+  padding: 24px 0;
+  font-size: 13px;
+  color: var(--text-4);
+}
+
+/* Provenance. An undated number invites being quoted as live. */
+.edge-inspector__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-4);
+}
+
+.edge-inspector__badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  border: 1px solid var(--hairline-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ── Overlays: command palette & shortcut sheet ───────────────────────────── */
+.palette__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 24px 24px;
+  background: rgba(0, 0, 0, 0.66);
+  animation: overlay-in 120ms var(--ease-out);
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 60vh;
+  overflow: hidden;
+  background: var(--panel-solid);
+  border: 1px solid var(--hairline-3);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  animation: palette-in 160ms var(--ease-out);
+}
+
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.palette__input {
+  flex: 0 0 auto;
+  height: 52px;
+  padding: 0 18px;
+  font-size: 15px;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline-2);
+  outline: none;
+}
+
+.palette__input::placeholder {
+  color: var(--text-4);
+}
+
+.palette__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.palette__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+/* Driven by data-active, not :hover — so keyboard and pointer share one
+   highlight and can't ever show two at once. */
+.palette__row[data-active='true'] {
+  background: var(--noon-pink-20);
+  box-shadow: inset 0 0 0 1px var(--noon-pink-40);
+}
+
+.palette__row-label {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--text-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.palette__row[data-active='true'] .palette__row-label {
+  color: var(--noon-pink);
+}
+
+.palette__row-hint {
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-4);
+}
+
+.palette__empty {
+  padding: 28px 12px;
+  font-size: 13px;
+  color: var(--text-4);
+  text-align: center;
+}
+
+.palette__footer {
+  display: flex;
+  gap: 16px;
+  padding: 10px 16px;
+  font-size: 11px;
+  color: var(--text-4);
+  border-top: 1px solid var(--hairline-2);
+}
+
+.palette__footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: "Geist Pixel", sans-serif;
+  font-variation-settings: "ELSH" 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-2);
+  background: var(--surface-3);
+  border: 1px solid var(--hairline-3);
+  border-radius: 4px;
+}
+
+.shortcuts {
+  width: min(680px, 100%);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--panel-solid);
+  border: 1px solid var(--hairline-3);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  animation: palette-in 160ms var(--ease-out);
+}
+
+.shortcuts__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.shortcuts__title {
+  font-size: 20px;
+  line-height: 28px;
+  color: var(--text-1);
+}
+
+.shortcuts__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 24px;
+}
+
+.shortcuts__group-title {
+  margin: 0 0 10px;
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-4);
+  font-weight: 400;
+}
+
+.shortcuts__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+.shortcuts__keys {
+  display: inline-flex;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 62px;
+}
+
+.shortcuts__desc {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-2);
+}
+
+/* ── Tabular numerals ─────────────────────────────────────────────────────── */
+/* Only the zoom readout had these. Everywhere else, values visibly jittered as
+   digits of different widths rolled past each other. */
+.atlas-hud__value,
+.edge-inspector__hero-value,
+.inspector__stat-value,
+.inspector__row-value,
+.edge-inspector__delta {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Reduced motion
+   The atlas leans hard on motion — camera flights, slot-machine reels, marching
+   connectors, morphing panels. All of it is decoration over information, so all of
+   it can go. Kept as one block so there's a single place to check.
+   ══════════════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-hover: 1ms;
+    --dur-state: 1ms;
+    --dur-roll: 1ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* The mount spin sets its transition inline, so it needs killing explicitly. */
+  .rolling-reel--spin {
+    transition: none !important;
+  }
+
+  /* The connector pulse is SVG SMIL, which CSS cannot switch off — it is skipped in
+     JS instead (see useReducedMotion in AtlasConnectors). */
+
+  /* Zeroing the variables rather than the transform, so the composed rule survives:
+     `transform: none` here would also delete the perspective and leave nothing for the
+     tilt to be absent *from*. Momentum and tilt are additionally skipped in JS, since a
+     coasting board is motion this preference is explicitly asking not to see. */
+  .atlas-board:hover,
+  .atlas-board.is-dragging,
+  .atlas-board.is-flying {
+    --board-lift: 0px;
+    --board-scale: 1;
+    --tilt-x: 0deg;
+    --tilt-y: 0deg;
+  }
+
+  .screen-plate:hover .screen-plate__frame {
+    transform: none;
+  }
+
+  /* The hover panel still appears — it's the only way to read a plate's numbers, so
+     suppressing it would remove information, not motion. Only the slide is dropped. */
+  .screen-plate__info {
+    transform: none;
+  }
+}
+
+/* ── Search trigger ───────────────────────────────────────────────────────── */
+/* Deliberately quiet: a bare glyph at low opacity that comes up to full strength on
+   hover. Reachable by mouse without adding another labelled control competing with
+   the mode switch, and the shortcut lives in its tooltip and the ? sheet. */
+.atlas-search-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-4);
+  cursor: pointer;
+  transition:
+    color var(--dur-hover) var(--ease-out),
+    background-color var(--dur-hover) var(--ease-out);
+}
+
+.atlas-search-trigger:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.atlas-search-trigger:focus-visible {
+  color: var(--text-1);
+  outline: 1px solid var(--noon-pink);
+  outline-offset: 2px;
+}
+
+/* ── Board labels: near-constant on-screen size ────────────────────────────── */
+/* Labels live in world space, so at 30% zoom a 16px caption renders at 5px and the
+   atlas becomes a field of anonymous rectangles — the single worst thing about
+   reading it zoomed out. Growing the world-space size as zoom falls holds the
+   apparent size roughly steady.
+   The upper bound matters: unbounded, a label at 10% zoom would be 110 world px and
+   collide with its neighbours, so it's capped at 2.5× and degrades below ~28% zoom
+   rather than turning into overlapping noise.
+   Done with a CSS variable off the world layer rather than React state, so zooming
+   re-renders nothing. */
+.atlas-board__label {
+  font-size: clamp(
+    var(--label-size, 16px),
+    calc(11px / var(--canvas-scale, 1)),
+    calc(var(--label-size, 16px) * 2.5)
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Buttons — shape and hover
+   Adapted from the NeuroField reference: tight radius, 1px hairline, monospace
+   label, and corner brackets that fly outward when pointed at. Its spring
+   (damping 60 / stiffness 500) is approximated with a short overshoot curve.
+   ══════════════════════════════════════════════════════════════════════════════ */
+:root {
+  /*
+   * No overshoot. This was `cubic-bezier(0.34, 1.4, 0.64, 1)` — a spring standing in
+   * for the reference's — but on the selection indicator the bounce read as sloppy
+   * rather than lively: the chip visibly overshot the segment and settled back, which
+   * makes a precise control feel imprecise. Decisive ease-out instead.
+   */
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.atlas-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  font-family: "Geist Pixel", sans-serif;
+  font-variation-settings: "ELSH" 0;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  /* Tighter than the panels' radii — the reference is fully square, but at these
+     sizes 6px keeps buttons from looking like a different toolkit to the cards. */
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    border-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
+}
+
+.atlas-btn--sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.atlas-btn--md {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.atlas-btn--icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--text-4);
+}
+
+.atlas-btn--outline {
+  border-color: var(--hairline-3);
+  background: var(--surface-2);
+}
+
+.atlas-btn--outline:hover {
+  border-color: rgba(255, 255, 255, 0.26);
+  background: var(--surface-3);
+}
+
+.atlas-btn--accent {
+  border-color: var(--noon-pink-40);
+  background: var(--noon-pink-20);
+  color: var(--noon-pink);
+}
+
+.atlas-btn--accent:hover {
+  border-color: var(--noon-pink);
+  background: rgba(247, 48, 111, 0.28);
+}
+
+.atlas-btn--ghost:hover,
+.atlas-btn--icon:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.atlas-btn:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: 2px;
+}
+
+.atlas-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.atlas-btn__label {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Corner brackets ──────────────────────────────────────────────────────── */
+/* Hidden inside the button at rest; they spring outward and fade in on hover. The
+   reference travels 18px, which at these control sizes would detach the marks from
+   the button — 5px reads as the same gesture at this scale. */
+.corner-brackets {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.corner-brackets__mark {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  opacity: 0;
+  border-color: var(--noon-pink);
+  border-style: solid;
+  border-width: 0;
+  transition:
+    opacity var(--dur-hover) var(--ease-out),
+    inset var(--dur-state) var(--ease-spring),
+    top var(--dur-state) var(--ease-spring),
+    left var(--dur-state) var(--ease-spring),
+    right var(--dur-state) var(--ease-spring),
+    bottom var(--dur-state) var(--ease-spring);
+}
+
+.corner-brackets__mark[data-corner='tl'] {
+  top: 2px;
+  left: 2px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.corner-brackets__mark[data-corner='tr'] {
+  top: 2px;
+  right: 2px;
+  border-top-width: 1px;
+  border-right-width: 1px;
+}
+.corner-brackets__mark[data-corner='br'] {
+  bottom: 2px;
+  right: 2px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+.corner-brackets__mark[data-corner='bl'] {
+  bottom: 2px;
+  left: 2px;
+  border-bottom-width: 1px;
+  border-left-width: 1px;
+}
+
+.has-brackets:hover .corner-brackets__mark,
+.has-brackets:focus-visible .corner-brackets__mark {
+  opacity: 1;
+}
+
+.has-brackets:hover .corner-brackets__mark[data-corner='tl'],
+.has-brackets:focus-visible .corner-brackets__mark[data-corner='tl'] {
+  top: -3px;
+  left: -3px;
+}
+.has-brackets:hover .corner-brackets__mark[data-corner='tr'],
+.has-brackets:focus-visible .corner-brackets__mark[data-corner='tr'] {
+  top: -3px;
+  right: -3px;
+}
+.has-brackets:hover .corner-brackets__mark[data-corner='br'],
+.has-brackets:focus-visible .corner-brackets__mark[data-corner='br'] {
+  bottom: -3px;
+  right: -3px;
+}
+.has-brackets:hover .corner-brackets__mark[data-corner='bl'],
+.has-brackets:focus-visible .corner-brackets__mark[data-corner='bl'] {
+  bottom: -3px;
+  left: -3px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Segmented control — one sliding selection
+   Every segmented thing in the app now shares this: Map/Screens, inspector tabs,
+   sort, Projects/Pods. The indicator slides rather than the fill switching, so a
+   selection change reads as movement along one track instead of a jump.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.segmented {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/*
+ * Selection is an underline, not a filled chip.
+ *
+ * The chip was a pink 20% fill with a 40% pink border and pink text, and over the
+ * tinted glass it turned muddy — the fill competed with the panel behind it and the
+ * sliding motion became hard to read against its own background. A 2px bar on the
+ * baseline has nothing to muddy: the slide is the clearest thing in the control, and
+ * the active label can simply go white.
+ */
+.segmented__indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  pointer-events: none;
+  /* No transition until it has been placed once — see `placed` in the component,
+     otherwise the indicator flies in from x=0 on first paint. */
+  transition: none;
+}
+
+.segmented__indicator.is-animated {
+  transition:
+    transform var(--dur-state) var(--ease-spring),
+    width var(--dur-state) var(--ease-spring);
+}
+
+.segmented--neutral .segmented__indicator {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.segmented--accent .segmented__indicator {
+  background: var(--noon-pink);
+}
+
+.segmented__item {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--text-2);
+  transition: color var(--dur-hover) var(--ease-out);
+}
+
+.segmented__item:hover {
+  color: var(--text-1);
+}
+
+.segmented__item[data-selected='true'] {
+  color: var(--text-1);
+}
+
+/* Active label stays white even in accent tone — the pink underline carries the
+   accent, and pink-on-glass text was part of what read badly. */
+.segmented--accent .segmented__item[data-selected='true'] {
+  color: var(--text-1);
+}
+
+.segmented__item:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: -2px;
+  border-radius: 7px;
+}
+
+.segmented__divider {
+  align-self: center;
+  width: 1px;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Mode transition
+   ══════════════════════════════════════════════════════════════════════════════ */
+.mode-warp {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Boot overlay
+   Structure from the LoadingOverlay reference — status lines, centred ( XX% ),
+   right-hand message, exiting upward on cubic-bezier(.2,.8,.2,1). Palette and type
+   are this product's: black over the cross-grid, noon pink, Geist Pixel.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 28px 32px;
+  box-sizing: border-box;
+  background: #000;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.09) 1px, transparent 1px);
+  background-size: 31px 31px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.boot.is-dismissed {
+  opacity: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+
+.boot__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 28px;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .boot__grid {
+    grid-template-columns: minmax(260px, 1.25fr) auto minmax(210px, 1fr);
+    align-items: center;
+  }
+}
+
+.boot__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.boot__step {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-4);
+  transition: color var(--dur-state) var(--ease-out);
+}
+
+.boot__step[data-done='true'] {
+  color: var(--text-2);
+}
+
+.boot__tick {
+  font-size: 9px;
+  color: var(--hairline-3);
+  transition: color var(--dur-state) var(--ease-out);
+}
+
+.boot__step[data-done='true'] .boot__tick {
+  color: var(--noon-pink);
+}
+
+.boot__step-label {
+  /* Reserve the line so the typewriter doesn't reflow the column as it types. */
+  min-height: 18px;
+}
+
+.boot__counter {
+  justify-self: center;
+  text-align: center;
+}
+
+.boot__percent {
+  font-size: 80px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.boot__status {
+  justify-self: start;
+}
+
+.boot__status-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--noon-pink);
+}
+
+/* One hairline that tracks the counter — the only chrome that moves. */
+.boot__rule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--hairline-2);
+}
+
+.boot__rule-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--noon-pink);
+  transform-origin: left center;
+  transition: transform var(--dur-state) var(--ease-out);
+}
+
+.boot__wordmark {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot__rule-fill,
+  .segmented__indicator.is-animated,
+  .corner-brackets__mark {
+    transition-duration: 1ms !important;
+  }
+}
+
+/* The four-mark CornerBrackets component is now on every interactive control —
+   Explore rows, neighbour rows, screen cards, segments, command-bar tools, buttons —
+   so hover feels identical everywhere. The earlier two-mark pseudo-element variant
+   was removed rather than left alongside it, which would have double-drawn. */
+.screen-plate,
+.sidebar-row.is-interactive,
+.neighbour-row.is-interactive,
+.atlas-search-trigger,
+.commandbar__tool:not(:disabled),
+.segmented__item {
+  position: relative;
+}
+
+/* Selected plates keep their marks pinned out, so selection reads without hover. */
+.screen-plate.is-selected .corner-brackets__mark {
+  opacity: 1;
+}
+.screen-plate.is-selected .corner-brackets__mark[data-corner='tl'] { top: -3px; left: -3px; }
+.screen-plate.is-selected .corner-brackets__mark[data-corner='tr'] { top: -3px; right: -3px; }
+.screen-plate.is-selected .corner-brackets__mark[data-corner='br'] { bottom: -3px; right: -3px; }
+.screen-plate.is-selected .corner-brackets__mark[data-corner='bl'] { bottom: -3px; left: -3px; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Bottom command bar
+   ══════════════════════════════════════════════════════════════════════════════ */
+.dashboard__commandbar {
+  position: absolute;
+  bottom: 20px;
+  /* Transform-free centring — see .dashboard__switch. */
+  inset-inline: 0;
+  width: fit-content;
+  margin-inline: auto;
+}
+
+.commandbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  background: var(--tool-fill);
+  border: 1px solid var(--tool-border);
+  border-radius: var(--tool-radius);
+  backdrop-filter: blur(var(--tool-blur));
+  -webkit-backdrop-filter: blur(var(--tool-blur));
+}
+
+.commandbar__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.commandbar__divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--hairline-3);
+}
+
+.commandbar__tool {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
+}
+
+.commandbar__tool:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.commandbar__tool[data-active='true'] {
+  background: var(--noon-pink-20);
+  box-shadow: inset 0 0 0 1px var(--noon-pink-40);
+  color: var(--noon-pink);
+}
+
+/* Unbuilt tools stay visible but plainly unavailable, with the reason in the
+   tooltip. A control that is present and silently inert is the failure mode this
+   whole effort has been unpicking. */
+.commandbar__tool:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+  color: var(--text-4);
+}
+
+.commandbar__tool:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: -1px;
+}
+
+.commandbar__glyph {
+  font-family: "Geist Pixel", sans-serif;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.commandbar__zoom {
+  min-width: 52px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-1);
+  font-family: "Geist Pixel", sans-serif;
+  font-variation-settings: "ELSH" 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color var(--dur-hover) var(--ease-out);
+}
+
+.commandbar__zoom:hover {
+  background: var(--surface-3);
+}
+
+.commandbar__zoom:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: -1px;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Braille spinner
+   ══════════════════════════════════════════════════════════════════════════════ */
+.atlas-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.atlas-spinner__glyph {
+  font-family: "Geist Pixel", ui-monospace, monospace;
+  color: var(--noon-pink);
+  /* Fixed width so cycling frames of different ink don't nudge the label. */
+  width: 1em;
+  text-align: center;
+}
+
+.atlas-spinner__label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-4);
+}
+
+.atlas-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Two-phase pixel wipe
+   Cells cascade IN over whatever is on screen, the parent swaps content behind the
+   mask, then they cascade OUT. Nothing is ever seen mid-swap.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.pixel-wipe {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  z-index: 320;
+  pointer-events: none;
+}
+
+.pixel-wipe__cell {
+  background: #08080a;
+  animation-name: wipe-in;
+  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  animation-fill-mode: forwards;
+  opacity: 0;
+}
+
+.pixel-wipe__cell.is-out {
+  animation-name: wipe-out;
+  animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
+  opacity: 1;
+}
+
+@keyframes wipe-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes wipe-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   One toolkit — the tool surface applied to every panel and bar
+   Previously each of these carried its own hand-written fill, border, radius and
+   blur, so the chrome read as several toolkits sharing a screen. They now share
+   --tool-* and the same control metrics.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.tool-surface {
+  background: var(--tool-fill);
+  border: 1px solid var(--tool-border);
+  border-radius: var(--tool-radius);
+  backdrop-filter: blur(var(--tool-blur));
+  -webkit-backdrop-filter: blur(var(--tool-blur));
+}
+
+/* The shared interactive-control shape: a 30px tile with a 7px radius that tints on
+   hover and takes the accent when active. Matches the command bar's tools, which is
+   the interaction the rest of the UI is being brought in line with. */
+.tool-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-h);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--control-radius);
+  background: transparent;
+  color: var(--text-3);
+  font-family: "Geist Pixel", sans-serif;
+  font-variation-settings: "ELSH" 0;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out);
+}
+
+.tool-control:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.tool-control[data-active='true'] {
+  background: var(--noon-pink-20);
+  box-shadow: inset 0 0 0 1px var(--noon-pink-40);
+  color: var(--noon-pink);
+}
+
+.tool-control:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: -1px;
+}
+
+/* Explore panel, both inspectors, palette and shortcut sheet all take the tool
+   surface. Overriding the components' inline fills requires the extra weight. */
+.dashboard__sidenav > div,
+.edge-inspector,
+.palette,
+.shortcuts {
+  background: var(--tool-fill) !important;
+  border-color: var(--tool-border) !important;
+  backdrop-filter: blur(var(--tool-blur));
+  -webkit-backdrop-filter: blur(var(--tool-blur));
+}
+
+/* Rows in the Explore panel and the neighbour lists become tool controls: full-width,
+   7px radius, tinting on hover rather than only shifting their background. */
+.sidebar-row,
+.neighbour-row {
+  border-radius: var(--control-radius);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Neighbour rows — artboard thumbnails
+   A phone-aspect crop, matching the proportion the canvas and cards already use, so
+   a flow list reads as screens rather than as text.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.neighbour-row__thumb {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 48px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #000;
+  border: 1px solid var(--hairline-2);
+}
+
+.neighbour-row__thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  opacity: 0.65;
+  transition: opacity var(--dur-hover) var(--ease-out);
+}
+
+.neighbour-row:hover .neighbour-row__thumb img {
+  opacity: 1;
+}
+
+/* Tab content settles in rather than appearing — switching Page Stats / Navigate to /
+   Reached from swaps a whole block, and an instant swap reads as a glitch next to a
+   sliding indicator. */
+.inspector-pane {
+  animation: pane-in 260ms var(--ease-out) both;
+}
+
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Screens grid — stagger out, stagger back in on re-sort
+   ══════════════════════════════════════════════════════════════════════════════ */
+.screen-plate {
+  animation: card-in 300ms var(--ease-out) both;
+  animation-delay: var(--card-delay, 0ms);
+}
+
+.browser__grid.is-exiting .screen-plate {
+  animation: card-out 180ms var(--ease-out) both;
+  animation-delay: var(--card-delay, 0ms);
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes card-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-wipe {
+    display: none;
+  }
+  .screen-plate,
+  .inspector-pane {
+    animation: none !important;
+  }
+}
+
+/* Explore panel internals adopt the control metrics. */
+.dashboard__sidenav .segmented,
+.dashboard__sidenav .sidebar-row {
+  border-radius: var(--control-radius);
+}
+
+.edge-inspector__close {
+  width: var(--control-h);
+  padding: 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Direct pixel cascade
+   The incoming view masks itself in over the outgoing one — no black frame, one
+   phase. Each rect in the SVG mask fades on its own stagger; white shows content,
+   black cuts it out and reveals whatever is beneath.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.pixel-cascade {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* Zero-size so the <svg> holding the mask never affects layout. */
+.pixel-cascade__defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.pixel-cascade__cell {
+  opacity: 0;
+  animation-name: cascade-cell-in;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.pixel-cascade__cell.is-out {
+  opacity: 1;
+  animation-name: cascade-cell-out;
+}
+
+@keyframes cascade-cell-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cascade-cell-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* Fallback where SVG masking of HTML isn't supported: a plain cross-fade, which is
+   still continuous. Better than rendering unmasked, which would be a hard cut. */
+.pixel-cascade.is-fading {
+  animation: cascade-fade-in 380ms var(--ease-out) both;
+}
+.pixel-cascade.is-fading-out {
+  animation: cascade-fade-out 380ms var(--ease-out) both;
+}
+@keyframes cascade-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes cascade-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Minimap
+   ══════════════════════════════════════════════════════════════════════════════ */
+.dashboard__minimap {
+  position: absolute;
+  bottom: 66px;
+  /* Transform-free centring — see .dashboard__switch. */
+  inset-inline: 0;
+  width: fit-content;
+  margin-inline: auto;
+}
+
+.minimap {
+  padding: 5px;
+  line-height: 0;
+  animation: pane-in 200ms var(--ease-out) both;
+}
+
+.minimap__svg {
+  display: block;
+  cursor: crosshair;
+  border-radius: 6px;
+}
+
+.minimap__frame {
+  transition: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Focus isolation
+   Out-of-neighbourhood boards fall right back rather than being hidden — keeping
+   them faintly visible preserves the sense of where you are on the plane.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.atlas-board.is-dimmed {
+  opacity: 0.16;
+  filter: saturate(0.4);
+  pointer-events: none;
+  transition:
+    opacity var(--dur-state) var(--ease-out),
+    filter var(--dur-state) var(--ease-out);
+}
+
+.atlas-board {
+  transition:
+    transform var(--dur-hover) var(--ease-out),
+    opacity var(--dur-state) var(--ease-out),
+    filter var(--dur-state) var(--ease-out);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   NeuroField corner treatment on every remaining control
+   The two-mark pseudo-element version is replaced by the real four-mark component
+   wherever a control can host it, so hover feels identical across the whole app.
+   ══════════════════════════════════════════════════════════════════════════════ */
+/* Segments deliberately have NO corner brackets. The sliding indicator is already
+   the selection signal, and adding four pink marks on top of a pink chip made the
+   control look busy and unresolved. Hover here is text weight and colour only. */
+.commandbar__tool .corner-brackets__mark {
+  border-color: var(--noon-pink);
+}
+
+/* Hover is a whisper — the underline is the only strong mark in this control. */
+.segmented__item:not([data-selected='true']):hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+/* Disabled controls must not advertise an interaction. */
+.commandbar__tool:disabled .corner-brackets {
+  display: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Panel swap
+   Screen inspector ⇄ flow inspector. Reuses the rightward motion the panel already
+   uses to appear, so the two read as a stack of cards rather than a hard cut.
+   ══════════════════════════════════════════════════════════════════════════════ */
+/* No `will-change: transform, opacity` here.
+ *
+ * It was the last of six things breaking the panel blur: `will-change` naming a property
+ * that would create a backdrop root creates one *pre-emptively and permanently*, and this
+ * element wraps the inspector's glass surface. It was also a permanent hint for an
+ * animation that runs for 190ms, which is the documented misuse — a standing promotion
+ * costs memory for the whole session to save nothing between swaps.
+ */
+.panel-swap {
+  /* Layout only; the animations below supply their own transforms. */
+  position: relative;
+}
+
+.panel-swap.is-out {
+  animation: panel-out 190ms var(--ease-out) both;
+}
+
+.panel-swap.is-in {
+  animation: panel-in 260ms var(--ease-out) both;
+}
+
+@keyframes panel-out {
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Explore panel — exit
+   It had an entrance and no exit, so it grew in gracefully then blinked out.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.dashboard__sidenav.is-closing {
+  animation: sidenav-collapse 180ms var(--ease-out) both;
+  pointer-events: none;
+}
+
+@keyframes sidenav-collapse {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Pan mode
+   Boards stop being drag targets, so the cursor should say so before you try.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.atlas-board.is-pan-mode {
+  cursor: grab;
+}
+
+.atlas-canvas[data-panning='true'] {
+  cursor: grabbing;
+}
+
+/* Connector port ticks sit on the frame edge and share the edge's colour, so a
+   focused or leaking connector marks its port in the same tone. */
+.atlas-edge__port {
+  transition: stroke var(--dur-state) var(--ease-out);
+}
+
+/* Socket halos fade with the edge state rather than popping. */
+.atlas-edge__halo {
+  transition: opacity var(--dur-state) var(--ease-out);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Marquee selection
+   The hit layer covers the plane but sits behind every board, and only reacts to a
+   pointer-down that lands on it *directly* — a drag starting on a board is that
+   board's drag, and a marquee that stole it would make boards unmovable.
+   ══════════════════════════════════════════════════════════════════════════════ */
+.atlas-marquee-host {
+  position: absolute;
+  /* Large enough to cover any realistic plane; the world layer has no intrinsic size. */
+  left: -100000px;
+  top: -100000px;
+  width: 200000px;
+  height: 200000px;
+  z-index: 0;
+}
+
+.atlas-marquee {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border: 1px solid var(--noon-pink);
+  background: rgba(247, 48, 111, 0.08);
+}
+
+/* A selected board gets pink corner marks pinned out — distinct from the focused
+   board's ring, so "in the selection" and "being inspected" stay separable. */
+.atlas-board.is-selected .corner-brackets__mark,
+.atlas-board.is-selected::before {
+  opacity: 1;
+}
+
+/* The selection ring is drawn by `Artboard` in world units so it scales with zoom (a
+   fixed CSS box-shadow here shrank to sub-pixel when zoomed out, which is why a
+   multi-selection looked like only the focused board was picked). Nothing to add. */
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Edge hover card — the full stat set for a connector
+   ══════════════════════════════════════════════════════════════════════════════ */
+/* ── Glass gradient stat cards (EdgeCard + StatsBar) ─────────────────────────
+   Purple-mauve gradient glass with green/orange indicators, matching the
+   reference screenshots. Both cards share the same visual grammar. */
+
+.edge-card {
+  position: fixed;
+  z-index: 260;
+  padding: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  display: inline-flex;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  backdrop-filter: blur(60px);
+  -webkit-backdrop-filter: blur(60px);
+  animation: pane-in 180ms var(--ease-out) both;
+}
+
+.stats-card {
+  position: relative;
+  z-index: auto;
+  padding: 24px;
+  box-sizing: border-box;
+  pointer-events: auto;
+  background: linear-gradient(
+    160deg,
+    rgba(80, 70, 100, 0.88) 0%,
+    rgba(100, 85, 115, 0.78) 35%,
+    rgba(140, 120, 145, 0.60) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  backdrop-filter: blur(60px) saturate(1.4);
+  -webkit-backdrop-filter: blur(60px) saturate(1.4);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.45),
+    0 2px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  animation: pane-in 180ms var(--ease-out) both;
+}
+
+.edge-card__accent {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1px;
+  height: 24px;
+  background: #F7306F;
+}
+
+.edge-card__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px 20px 20px;
+  min-width: 0;
+}
+
+/* ── EdgeCard header ── */
+.edge-card__header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.edge-card__from {
+  font-size: 14px;
+  line-height: normal;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.edge-card__title-wrap {
+  position: relative;
+  align-self: flex-start;
+}
+
+.edge-card__to {
+  font-size: 20px;
+  line-height: 1;
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+.edge-card__action {
+  margin-top: 0;
+  font-size: 14px;
+  line-height: normal;
+  color: var(--noon-pink);
+}
+
+/* ── StatsBar header ── */
+.stats-card__title {
+  font-size: 22px;
+  line-height: 28px;
   color: #fff;
+  margin-bottom: 16px;
+}
+
+/* ── Shared stat rows ── */
+.edge-card__stats {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.edge-card__group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stats-card__group {
+  display: flex;
+  flex-direction: column;
+}
+
+.stats-card__group + .stats-card__group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.edge-card__row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.edge-card__row > svg {
+  flex: 0 0 auto;
+}
+
+.stats-card__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.edge-card__indicator,
+.stats-card__indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.edge-card__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  width: 160px;
+  font-size: 14px;
+  line-height: normal;
+  color: rgba(255, 255, 255, 0.64);
+}
+
+.stats-card__label {
+  font-size: 13px;
+  line-height: 18px;
+  color: rgba(255, 255, 255, 0.6);
+  min-width: 0;
+}
+
+.edge-card__value {
+  font-size: 14px;
+  line-height: 1;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-card__value {
+  font-size: 14px;
+  line-height: 18px;
+  color: #fff;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Trigger row in the edge inspector — the affordance that fires the transition. A quiet
+   label/value pair rather than a hero: it's context for the numbers, not a number. */
+.edge-inspector__trigger {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--control-radius);
+}
+
+.edge-inspector__trigger-label {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-4);
+}
+
+.edge-inspector__trigger-value {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-1);
+  text-align: right;
+}
+
+/* ── Destructive-edit notice ───────────────────────────────────────────────── */
+/* Anchored above the command bar. A truthful count plus a real Undo, rather than a
+   confirmation modal in front of a reversible action.
+   Transform-free centring, and the element itself never animates — it sits inside
+   .dashboard__chrome and a transform here would establish a backdrop root and kill its
+   own glass. See .dashboard__switch. */
+.dashboard__notice {
+  position: absolute;
+  bottom: 66px;
+  inset-inline: 0;
+  width: fit-content;
+  margin-inline: auto;
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--tool-h, 38px);
+  padding: 0 8px 0 14px;
+  box-sizing: border-box;
+  background: var(--tool-fill);
+  border: 1px solid var(--tool-border);
+  border-radius: var(--tool-radius);
+  backdrop-filter: blur(var(--tool-blur));
+  -webkit-backdrop-filter: blur(var(--tool-blur));
+}
+
+.dashboard__notice-text {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.dashboard__notice-undo {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h);
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--noon-pink);
+  cursor: pointer;
+}
+
+/* ── Multi-selection panel ─────────────────────────────────────────────────── */
+/* What the right-hand panel shows when the edit target is a set rather than one screen.
+   Reuses the edge inspector's shell so the three panel occupants share a grammar. */
+.multisel__hero {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+}
+
+.multisel__count {
+  font-size: 30px;
+  line-height: 34px;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.multisel__count-label {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-4);
+}
+
+.multisel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.multisel__row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 4px 6px;
+  box-sizing: border-box;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--control-radius);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.multisel__row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.multisel__row img {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: cover;
+  object-position: top center;
+  border-radius: 2px;
+}
+
+.multisel__row-label {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.multisel__delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--control-h);
+  color: var(--noon-pink);
+  cursor: pointer;
+}
+
+.multisel__delete:disabled {
+  color: var(--text-4);
+  cursor: not-allowed;
+}
+
+/* ── Inspector title, editable ──────────────────────────────────────────────── */
+/* A button at rest so it's keyboard-reachable and announces as actionable; swaps for an
+   input in edit mode. Both sized identically so opening the editor doesn't shift the
+   header. */
+.rightnav__title,
+.rightnav__title-input {
+  min-width: 0;
+  font-size: 24px;
+  line-height: 32px;
+  color: #ffffff;
+}
+
+.rightnav__title {
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: border-color 120ms ease;
+}
+
+.rightnav__title:hover:not(:disabled) {
+  border-bottom-color: var(--hairline-3);
+}
+
+.rightnav__title:disabled {
+  cursor: default;
+}
+
+.rightnav__title:focus-visible {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: 2px;
+}
+
+.rightnav__title-input {
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  /* Pink underline is the only edit affordance — a boxed field at 24px would dominate the
+     header and make the panel look like a form. */
+  border-bottom: 1px solid var(--noon-pink);
+  outline: none;
+  caret-color: var(--noon-pink);
+}
+
+/* ── Draw-flow ─────────────────────────────────────────────────────────────── */
+/* The rubber-band preview while drawing an edge. Dashed pink so it reads as
+   provisional; solid-weight and brighter once it's over a valid target. */
+.atlas-draft__line {
+  opacity: 0.7;
+}
+.atlas-draft__line.is-target {
+  opacity: 1;
+  stroke-dasharray: none;
+}
+
+/* In draw-flow mode every board is a flow source — a crosshair says "click to start". */
+.atlas-board.is-flow-mode {
+  cursor: crosshair;
+}
+/* Hover preview: a faint ring on any board you point at, so before you click you can see
+   it's a valid node to start (or finish) an edge from. */
+.atlas-board.is-flow-mode:hover .atlas-board__frame {
+  outline: 1px solid var(--noon-pink-40);
+  outline-offset: 2px;
+}
+/* Armed source and the board under the cursor both get the full pink ring, so the two
+   ends of the live gesture read louder than the hover preview. */
+.atlas-board.is-flow-source .atlas-board__frame,
+.atlas-board.is-flow-target .atlas-board__frame {
+  outline: 1px solid var(--noon-pink);
+  outline-offset: 2px;
+}
+
+/* ── Edge inspector: editable Trigger ──────────────────────────────────────── */
+.edge-inspector__trigger--button {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+.edge-inspector__trigger--button:disabled {
+  cursor: default;
+}
+.edge-inspector__trigger-value.is-empty {
+  color: var(--text-4);
+}
+.edge-inspector__trigger-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin-left: 12px;
+  padding: 2px 0;
+  font-size: 12px;
+  text-align: right;
+  color: var(--text-1);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--noon-pink);
+  outline: none;
+  caret-color: var(--noon-pink);
+}
+.edge-inspector__trigger-input::placeholder {
+  color: var(--text-4);
+}
+
+/* ── Multi-select: arrange controls ────────────────────────────────────────── */
+.multisel__arrange {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline-2);
+}
+.multisel__arrange-label {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-4);
+}
+.multisel__arrange-row {
+  display: flex;
+  gap: 6px;
+}
+.multisel__arrange-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-h);
+  flex: 1 1 0;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.multisel__arrange-btn.is-wide {
+  font-size: 11px;
+}
+.multisel__arrange-btn:hover:not(:disabled) {
+  color: var(--text-1);
+}
+.multisel__arrange-btn:disabled {
+  color: var(--text-4);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Smart-alignment guides ────────────────────────────────────────────────── */
+/* Drawn while a single board drags, when its edge/centre lines up with a neighbour's.
+   Pink and crisp so it reads as "you're aligned here", gone the instant you release. */
+.atlas-guide {
+  stroke: var(--noon-pink);
+  opacity: 0.85;
+  shape-rendering: crispEdges;
+}
+
+/* ── Reconnect handles ─────────────────────────────────────────────────────── */
+/* Grabbable dots on a selected edge's two ends. Drag one to another board to re-point
+   that end. Pink fill, white hairline, so they read as live handles rather than sockets. */
+.atlas-reconnect-handle {
+  fill: var(--noon-pink);
+  stroke: #fff;
+  stroke-width: 1;
+  cursor: grab;
+  pointer-events: auto;
+}
+.atlas-reconnect-handle:active {
+  cursor: grabbing;
+}
+
+/* ── Tool dial ────────────────────────────────────────────────────────────── */
+/* A radial menu summoned at the cursor, replacing the tool half of the command
+   bar. Ported from robot-components' DialMenu.
+
+   Note what is deliberately absent: `backdrop-filter`. The reference declares a
+   blur on its centre hub, but its own `perspective` and `preserve-3d` ancestors
+   each establish a backdrop root, so that blur has never rendered — what you
+   actually see there is the flat fill below. Copying the declaration would import
+   a property that cannot work and imply this surface is glass. See the standing
+   constraint: `perspective` here is safe precisely because nothing inside the dial
+   asks for a backdrop. */
+.dial {
+  position: fixed;
+  z-index: 260;
+  perspective: 800px;
+  pointer-events: auto;
+}
+
+.dial__tilt {
+  transform-style: preserve-3d;
+  transform: rotateX(0deg) rotateY(0deg);
+}
+
+/* Leaving. The tiles retract via springs in JS; the surrounding chrome just fades, and the
+   whole thing stops taking pointer events immediately so a click during the exit falls
+   through to the canvas instead of hitting a tile that's already on its way out. */
+.dial.is-closing {
+  pointer-events: none;
+}
+
+.dial.is-closing .dial__rings,
+.dial.is-closing .dial__hub {
+  opacity: 0;
+  transition: opacity 140ms var(--ease-out);
+}
+
+.dial__rings {
+  position: absolute;
+  pointer-events: none;
+}
+
+.dial__needle {
+  position: absolute;
+  inset: 0;
+  transform-origin: center;
+}
+
+/* Flat, not glass — see above. This is also the dial's exit, so it is a real button and
+   takes pointer events; the label sitting on top of it must not. */
+.dial__hub {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100px;
+  height: 100px;
+  margin: -50px 0 0 -50px;
+  padding: 0;
+  border-radius: 50%;
+  /* Opaque enough to read as a surface rather than a hole in the ring. */
+  background: rgb(22, 22, 24);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  transition:
+    background-color 0.15s var(--ease-out),
+    border-color 0.15s var(--ease-out);
+}
+
+.dial__hub:hover {
+  background: rgb(34, 24, 28);
+  border-color: rgba(247, 48, 111, 0.55);
+}
+
+.dial__label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  transition: opacity 0.3s var(--ease-out);
+}
+
+.dial__page-name {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  min-width: 50px;
+  text-align: center;
+}
+
+/* The exit state of the hub label: ✕ over the word CLOSE. */
+.dial__page-name.is-exit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #f7306f;
+  animation: none;
+}
+
+.dial__exit-glyph {
+  display: flex;
+  color: #f7306f;
+}
+
+.dial__exit-glyph svg {
+  width: 16px;
+  height: 16px;
+}
+
+.dial__pages {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: -55px 0 0 -55px;
+  pointer-events: none;
+}
+
+.dial__seat {
+  position: absolute;
+  left: 0;
+  top: 0;
+  cursor: pointer;
+  will-change: transform;
+}
+
+.dial__face {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  background: rgb(36, 36, 36);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 24px 24px -12px rgba(0, 0, 0, 0.25);
+  transition:
+    border-color 0.15s var(--ease-out),
+    background-color 0.15s var(--ease-out);
+}
+
+.dial__seat:hover .dial__face {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgb(44, 44, 44);
+}
+
+/* An active mode or an on toggle takes the accent, so the ring shows state and not
+   just a list of commands — the strip it replaces did that with a lit tile.
+
+   The tint is LAYERED over the opaque base, not substituted for it. Setting
+   `background: rgba(247,48,111,0.1)` replaced the base fill outright, so the selected tile
+   — the one tile that most needs to read as solid — became 90% transparent and you could
+   see the canvas straight through it. Two backgrounds on one declaration keeps the tile
+   opaque and tints it. */
+.dial__seat.is-on .dial__face {
+  border-color: rgba(247, 48, 111, 0.7);
+  background:
+    linear-gradient(rgba(247, 48, 111, 0.14), rgba(247, 48, 111, 0.14)),
+    rgb(36, 36, 36);
+}
+
+.dial__seat.is-on:hover .dial__face {
+  background:
+    linear-gradient(rgba(247, 48, 111, 0.22), rgba(247, 48, 111, 0.22)),
+    rgb(44, 44, 44);
+}
+
+.dial__seat.is-disabled {
+  cursor: default;
+}
+
+.dial__seat.is-disabled .dial__face {
+  background: rgb(28, 28, 28);
+  border-color: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
+}
+
+.dial__content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  pointer-events: none;
+}
+
+/* The command bar's glyphs are authored at 14px; on a 64px tile they need to be
+   larger, and they are viewBox-based so they scale without redrawing. */
+.dial__glyph {
+  display: flex;
+  color: rgba(255, 255, 255, 0.55);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+  transition: color 0.15s var(--ease-out);
+}
+
+.dial__glyph svg {
+  width: 20px;
+  height: 20px;
+}
+
+.dial__seat:hover .dial__glyph {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.dial__seat.is-on .dial__glyph {
+  color: #f7306f;
+}
+
+.dial__seat.is-disabled .dial__glyph {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* 9px in the reference. Lifted to 0.5 alpha rather than its 0.35, because at this
+   size 35% white on near-black is well under the AA floor and the label is the only
+   thing naming the command. */
+.dial__caption {
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  transition: color 0.15s var(--ease-out);
+  max-width: 58px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dial__seat:hover .dial__caption {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.dial__seat.is-on .dial__caption {
+  color: rgba(247, 48, 111, 0.9);
+}
+
+.dial__seat.is-disabled .dial__caption {
+  color: rgba(255, 255, 255, 0.22);
+}
+
+.dial__hover-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: 14px;
+  border: 1px solid rgba(247, 48, 111, 0.25);
+  pointer-events: none;
+}
+
+/* The dial's trigger in the slim bar. Right-click is the primary gesture, but an
+   invisible one — the same objection the plan raises about ⌘K-with-no-affordance. */
+.commandbar__dial {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--control-h);
+  padding: 0 10px;
+  border-radius: var(--control-radius);
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.62);
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  transition:
+    color 0.15s var(--ease-out),
+    background-color 0.15s var(--ease-out);
+}
+
+.commandbar__dial:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.commandbar__dial[data-open='true'] {
+  color: #f7306f;
+}
+
+/* The page name flashes noon pink and settles to white as the scramble resolves — the
+   reference lerps this colour in JS; done here off the remount so the scramble itself
+   stays the one shared implementation. */
+@keyframes dial-page-flash {
+  from {
+    color: #f7306f;
+  }
+  to {
+    color: rgba(255, 255, 255, 0.7);
+  }
+}
+
+.dial__page-name {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.dial__page-name > span {
+  animation: dial-page-flash 480ms var(--ease-out) both;
+}
+
+/* ── Scroll edge fade ─────────────────────────────────────────────────────── */
+/* The effect from Skiper UI's "skiper87" (scroll with fade), implemented directly
+   rather than installed. Upstream it arrives as a shadcn component that pulls in
+   framer-motion and a Radix ScrollArea, plus a `shadcn init` this project has never
+   had — which would also let the CLI rewrite this stylesheet. The effect itself is a
+   mask, so it's written here instead: no dependencies, and it lives beside the rest
+   of the design system.
+
+   Two departures, both deliberate.
+
+   1. **The fade is scroll-aware.** A static mask fades the top edge even when you're
+      already at the top, which says "there's more above" when there isn't — the same
+      class of small dishonesty this project avoids elsewhere. The edges are driven by
+      a scroll-progress timeline, so the top only fades once you've actually left the
+      top, and the bottom stops fading when you reach the end.
+
+   2. **It self-disables when there's nothing to scroll.** With no overflow the scroll
+      timeline is inactive, the animation therefore has no effect, and the declared
+      `0px` edges leave the element completely unmasked. So a short list is never
+      fringed — no JS measuring required for that, it falls out of the spec.
+
+   Where the timeline isn't supported the mask simply stays at 0px and you get today's
+   hard edges. Degrading to "no effect" is the right failure for decoration.
+
+   `mask-image` establishes a backdrop root, so this must never sit above a
+   `backdrop-filter`. It is applied only to scroll containers, whose glass (where any)
+   is an *ancestor* — except `.shortcuts`, which carries both on the one element; that
+   case is verified visually rather than assumed. */
+
+@property --fade-top {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --fade-bottom {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+.has-scroll-fade,
+.rightnav__pane,
+.browser__rail,
+.edge-inspector,
+.palette__list,
+.shortcuts,
+.multisel__list,
+.browser__main {
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  -webkit-mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+}
+
+@supports (animation-timeline: scroll()) {
+  .has-scroll-fade,
+  .rightnav__pane,
+  .browser__rail,
+  .edge-inspector,
+  .palette__list,
+  .shortcuts,
+  .multisel__list,
+  .browser__main {
+    animation: scroll-fade-edges linear;
+    animation-timeline: scroll(self block);
+  }
+}
+
+/* The 8%/92% shoulders mean the fade reaches full strength almost immediately after
+   you start scrolling, instead of easing in across the whole list. */
+@keyframes scroll-fade-edges {
+  0% {
+    --fade-top: 0px;
+    --fade-bottom: 20px;
+  }
+  8% {
+    --fade-top: 20px;
+  }
+  92% {
+    --fade-bottom: 20px;
+  }
+  100% {
+    --fade-top: 20px;
+    --fade-bottom: 0px;
+  }
+}
+
+/* Reduced motion keeps the fade — it's a static gradient, not movement — but drops the
+   scroll-linked animation of it, which is the part that moves. */
+@media (prefers-reduced-motion: reduce) {
+  .has-scroll-fade,
+  .rightnav__pane,
+  .browser__rail,
+  .edge-inspector,
+  .palette__list,
+  .shortcuts,
+  .multisel__list,
+  .browser__main {
+    animation: none;
+    --fade-top: 20px;
+    --fade-bottom: 20px;
+  }
+}
+
+/* ── Inspector: one vertical column ───────────────────────────────────────── */
+/* Restructured from two columns (preview beside stats) to one, per the target
+   layout. The head holds everything that must survive any viewport height; the
+   pane below it is the only thing that scrolls.
+
+   The ordering is the answer to a hard constraint, not a preference: the artboard
+   at its true 400×865 aspect is 647px tall at this width, and the panel caps at
+   `100vh - 82px` (817px at a 900px viewport). Chrome plus image alone therefore
+   overrun the panel, so with the preview first NO arrangement puts a stat in the
+   first fold. Hoisting the headline pair above the image guarantees it at any
+   height. */
+.rightnav__head {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 0 0 auto;
+}
+
+/* The scrolling tail. Inherits the edge fade from the `.rightnav__pane` selector
+   list further up, so long stat lists signal that there is more below. */
+.rightnav__pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The artboard's window.
+   The image inside is always drawn at its own aspect; this clips. That is what
+   makes the device selector honest — it changes how much of the page you see,
+   never the page's proportions. */
+.rightnav__viewport {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #000;
+}
+
+/* A windowed (non-native) viewport gets a fold rule at its lower edge, so the cut
+   reads as "this is where the device stops" rather than as a cropped image. */
+.rightnav__viewport.is-windowed::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: repeating-linear-gradient(
+    to right,
+    rgba(247, 48, 111, 0.9) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.rightnav__fold-note {
+  font-size: 11px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+/* ── Device selector ──────────────────────────────────────────────────────── */
+.rightnav__device {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/* No transform on the way in — this menu sits above nothing that blurs, but the
+   surface it overlaps does, and animating position here has caused that class of
+   bug twice already. Opacity only. */
+.rightnav__device-menu {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgb(24, 24, 27);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+  animation: overlay-in 120ms var(--ease-out);
+}
+
+.rightnav__device-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.12s var(--ease-out), color 0.12s var(--ease-out);
+}
+
+.rightnav__device-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+}
+
+.rightnav__device-item.is-on {
+  color: #f7306f;
+}
+
+.rightnav__device-dims {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.rightnav__device-item.is-on .rightnav__device-dims {
+  color: rgba(247, 48, 111, 0.8);
+}
+
+.rightnav__device-note {
+  padding: 8px 10px 4px;
+  font-size: 10px;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-top: 4px;
 }

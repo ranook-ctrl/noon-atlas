@@ -4,12 +4,12 @@ import {
   MinimisedFloatingMenu,
   Pill,
   Row,
-  FlowRow,
   DeviceSize,
   TopPills,
 } from '../components'
-import { TopNav, BreadcrumbsTab, StatsBar, FlowStats, MasterImage, RightNav, Sidebar } from '../molecules'
+import { TopNav, BreadcrumbsTab, StatsBar, MasterImage, RightNav, Sidebar } from '../molecules'
 import { InfiniteCanvas, CanvasSection } from '../canvas'
+import { SEED_PROJECTS } from '../data/seed/noonAtlasSeed'
 
 function Section({ title, node, children }: { title: string; node: string; children: ReactNode }) {
   return (
@@ -76,13 +76,6 @@ export default function Gallery() {
           </div>
         </Section>
 
-        <Section title="Flow Row" node="129:104177">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <FlowRow label="Monetisation_per_day" value="380.000" />
-            <FlowRow label="Entry-point CTR" value="11.2%" markerColor="#26B57C" />
-          </div>
-        </Section>
-
         <Section title="Device Size" node="25:25261">
           <DeviceSize device="iphone 13 Pro" dimensions="375 x 812" />
         </Section>
@@ -120,10 +113,6 @@ export default function Gallery() {
               <StatsBar />
             </Section>
 
-            <Section title="Flow Stats" node="129:104237">
-              <FlowStats />
-            </Section>
-
             <Section title="Master Image" node="25:27389">
               <MasterImage />
             </Section>
@@ -144,28 +133,30 @@ export default function Gallery() {
                 noon Atlas — Sidebar
               </h1>
               <p className="pixel" style={{ margin: 0, fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>
-                3 variants · Geist Pixel · node 41:54662
+                3 states · Geist Pixel · node 41:54662
               </p>
             </header>
 
+            {/* These were once a `variant` prop with a hardcoded highlight. They're
+                real states now — selection derives from which project is open. */}
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 32 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <span className="pixel" style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
                   Default
                 </span>
-                <Sidebar variant="default" />
+                <Sidebar projects={SEED_PROJECTS} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <span className="pixel" style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
-                  Hover / selected
+                  Selected
                 </span>
-                <Sidebar variant="hover" />
+                <Sidebar projects={SEED_PROJECTS} activeProjectId="image-first-navigation" />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <span className="pixel" style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
                   Pod
                 </span>
-                <Sidebar variant="pod" />
+                <Sidebar projects={SEED_PROJECTS} activeProjectId="storefront" />
               </div>
             </div>
           </div>

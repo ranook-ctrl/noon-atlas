@@ -1,75 +1,45 @@
-type SectionStat = { label: string; value: string }
-export type SectionStats = { title: string; primary: SectionStat[]; secondary: SectionStat[] }
-export type HomepageSection = { name: string; weight: number; stats: SectionStats }
+import type { Section } from '../domain/types'
 
-/**
- * The homepage image is one tall JPG, so its sections are identified here as
- * full-width blocks weighted by their rough vertical share of the page (≈100
- * total). Each block is a hover target that reveals a StatsBar for that section.
- */
-const SECTION_DEFS: { name: string; weight: number }[] = [
-  { name: 'Top Nav & Search', weight: 6 },
-  { name: 'Welcome Banner', weight: 5 },
-  { name: 'Cashback Strip', weight: 3 },
-  { name: 'Shop by Category', weight: 9 },
-  { name: 'Recommended for you', weight: 12 },
-  { name: 'Offers for you', weight: 6 },
-  { name: 'Mega Deals', weight: 16 },
-  { name: 'Bestsellers', weight: 10 },
-  { name: 'Keep shopping for', weight: 6 },
-  { name: 'Summer Essentials', weight: 8 },
-  { name: 'Selling out fast', weight: 9 },
-  { name: 'New Launches', weight: 10 },
-]
-
-const rand = (min: number, max: number) => Math.random() * (max - min) + min
-const grouped = (min: number, max: number) => Math.round(rand(min, max)).toLocaleString('en-US')
-
-/** Random — but stable for the page's lifetime — stats for one section block. */
-function makeStats(title: string): SectionStats {
-  return {
-    title,
-    primary: [
-      { label: 'Users per day', value: grouped(50_000, 800_000) },
-      { label: 'Impressions', value: `${rand(80, 100).toFixed(1)}%` },
-    ],
-    secondary: [
-      { label: 'GP of Widget', value: rand(0.2, 0.95).toFixed(2) },
-      { label: 'Conversion Rate', value: `${rand(0.3, 3).toFixed(2)}%` },
-      { label: 'atc_gmv_per_user', value: rand(100, 600).toFixed(2) },
-      { label: 'atc_gmv_per_day', value: grouped(500_000, 3_000_000) },
-      { label: 'Monetisation_per_day', value: grouped(100_000, 900_000) },
-    ],
-  }
-}
-
-export const HOMEPAGE_SECTIONS: HomepageSection[] = SECTION_DEFS.map((s) => ({
-  ...s,
-  stats: makeStats(s.name),
-}))
+export type HoveredSection = { sectionId: string; top: number; left: number }
 
 type MasterImageProps = {
   width?: number
-  height?: number
-  /** the homepage screenshot to render inside the phone frame */
+  /** Number (px) or a CSS length like '100%' so the preview can fill a flex column. */
+  height?: number | string
+  /** the screenshot to render inside the phone frame */
   src?: string
-  /** hover a section block → its index + on-screen rect (null when leaving) */
-  onHoverSection?: (info: { index: number; top: number; left: number } | null) => void
+  alt?: string
+  /**
+   * Hover targets tiled over the image, in render order. Comes from the atlas
+   * snapshot and is scoped to the screen being previewed.
+   *
+   * This used to be a module-level constant of *homepage* sections, applied to
+   * whatever image the inspector happened to be showing — so hovering "Mega Deals"
+   * over the Cart preview reported homepage numbers for a section the Cart doesn't
+   * have. Sections are per-screen data now, and a screen with none simply gets no
+   * hover targets.
+   */
+  sections?: Section[]
+  /** hover a section block → its id + on-screen rect (null when leaving) */
+  onHoverSection?: (info: HoveredSection | null) => void
 }
 
 /**
- * Figma: Master Image (node 25:27389) — the noon homepage mockup in a 264×572
- * phone frame. The image renders full-width / natural-height and the frame
- * scrolls vertically. Full-width section blocks are tiled over the image as
- * hover targets; hovering one surfaces that section so the dashboard can show a
- * StatsBar for it.
+ * Figma: Master Image (node 25:27389) — a screen mockup in a 264×572 phone frame.
+ * The image renders full-width / natural-height and the frame scrolls vertically.
+ * Full-width section blocks are tiled over the image as hover targets; hovering one
+ * surfaces that section so the dashboard can show a StatsBar for it.
  */
 export function MasterImage({
   width = 264,
   height = 572,
   src = '/images/homepage.jpg',
+  alt = 'Screen preview',
+  sections,
   onHoverSection,
 }: MasterImageProps) {
+  const blocks = sections ?? []
+
   return (
     <div
       onMouseLeave={() => onHoverSection?.(null)}
@@ -84,23 +54,28 @@ export function MasterImage({
       }}
     >
       <div style={{ position: 'relative', width: '100%' }}>
-        <img src={src} alt="noon Homepage" style={{ display: 'block', width: '100%', height: 'auto' }} />
+        <img src={src} alt={alt} style={{ display: 'block', width: '100%', height: 'auto' }} />
 
-        {/* Section blocks — transparent, full width, heights proportional to
-            each section's weight; each reports itself to the dashboard on hover. */}
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
-          {HOMEPAGE_SECTIONS.map((s, i) => (
-            <div
-              key={s.name}
-              className="master-image__section"
-              style={{ flex: s.weight, width: '100%' }}
-              onMouseEnter={(e) => {
-                const r = e.currentTarget.getBoundingClientRect()
-                onHoverSection?.({ index: i, top: r.top, left: r.left })
-              }}
-            />
-          ))}
-        </div>
+        {/* Section blocks — transparent, full width, heights proportional to each
+            section's weight; each reports itself to the dashboard on hover. */}
+        {blocks.length > 0 && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
+            {blocks.map((s) => (
+              <div
+                key={s.id}
+                className="master-image__section"
+                style={{ flex: s.weight, width: '100%' }}
+                onMouseEnter={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect()
+                  // Reports the section *id*, not its array index. The index-based
+                  // version coupled this component's ordering to the dashboard's
+                  // lookup, which breaks the moment sections are reorderable.
+                  onHoverSection?.({ sectionId: s.id, top: r.top, left: r.left })
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

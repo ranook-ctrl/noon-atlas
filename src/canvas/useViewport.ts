@@ -17,46 +17,6 @@ const ZOOM_SENSITIVITY = 0.02
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
 
-const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)
-
-/**
- * A CSS-style `cubic-bezier(x1, y1, x2, y2)` timing function, returned as an
- * easing `(t) => eased`. Endpoints P0=(0,0) and P3=(1,1) are fixed; for a given
- * progress `t` we solve x(s)=t with a few Newton steps and return y(s).
- */
-export function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
-  const cx = 3 * x1
-  const bx = 3 * (x2 - x1) - cx
-  const ax = 1 - cx - bx
-  const cy = 3 * y1
-  const by = 3 * (y2 - y1) - cy
-  const ay = 1 - cy - by
-  const sampleX = (s: number) => ((ax * s + bx) * s + cx) * s
-  const sampleY = (s: number) => ((ay * s + by) * s + cy) * s
-  const slopeX = (s: number) => (3 * ax * s + 2 * bx) * s + cx
-  return (t: number) => {
-    if (t <= 0) return 0
-    if (t >= 1) return 1
-    let s = t
-    for (let i = 0; i < 5; i++) {
-      const dx = sampleX(s) - t
-      if (Math.abs(dx) < 1e-4) break
-      const d = slopeX(s)
-      if (Math.abs(d) < 1e-6) break
-      s -= dx / d
-    }
-    return sampleY(clamp(s, 0, 1))
-  }
-}
-
-/** Options for {@link ViewportController.animateTo}. */
-export interface AnimateOpts {
-  /** Duration in ms (default 450). */
-  duration?: number
-  /** Easing `(t) => eased`, both in [0,1] (default easeOutCubic). */
-  easing?: (t: number) => number
-}
-
 /** Convert a screen point (relative to the canvas element) into world coordinates. */
 export function screenToWorld(viewport: Viewport, sx: number, sy: number) {
   return {
@@ -74,9 +34,22 @@ export interface ViewportController {
     onPointerDown: (e: ReactPointerEvent) => void
   }
   reset: () => void
+  /**
+   * Zoom about the viewport centre, eased.
+   *
+   * Deliberately animated: the +/− buttons and keys used to call the instant
+   * `zoomAt` used by the wheel, so a click teleported the camera between zoom
+   * levels with nothing to follow. The wheel keeps the instant path — it's
+   * continuous input and already feels smooth — but a discrete step needs
+   * interpolating or you lose your place on the plane.
+   */
   zoomBy: (factor: number) => void
+  /** Ease to an absolute zoom, holding the viewport centre. */
+  zoomTo: (scale: number) => void
   /** Smoothly animate the viewport to a target pan/zoom (eased). */
-  animateTo: (target: Partial<Viewport>, opts?: AnimateOpts) => void
+  animateTo: (target: Partial<Viewport>, duration?: number) => void
+  /** Set the viewport instantly, with no animation — for initial framing. */
+  jumpTo: (target: Partial<Viewport>) => void
 }
 
 /**
@@ -109,22 +82,20 @@ export function useViewport(initial?: Partial<Viewport>): ViewportController {
   }, [])
 
   const animateTo = useCallback(
-    (target: Partial<Viewport>, opts?: AnimateOpts) => {
+    (target: Partial<Viewport>, duration = 450) => {
       cancelAnim()
       const from = vpRef.current
       const to = { ...from, ...target }
-      const duration = opts?.duration ?? 450
-      const ease = opts?.easing ?? easeOutCubic
       const start = performance.now()
+      const ease = (t: number) => 1 - Math.pow(1 - t, 3) // easeOutCubic
       const tick = (now: number) => {
-        const t = Math.min(1, (now - start) / duration)
-        const k = ease(t)
+        const k = ease(Math.min(1, (now - start) / duration))
         setViewport({
           x: from.x + (to.x - from.x) * k,
           y: from.y + (to.y - from.y) * k,
           scale: from.scale + (to.scale - from.scale) * k,
         })
-        anim.current = t < 1 ? requestAnimationFrame(tick) : null
+        anim.current = k < 1 ? requestAnimationFrame(tick) : null
       }
       anim.current = requestAnimationFrame(tick)
     },
@@ -137,18 +108,11 @@ export function useViewport(initial?: Partial<Viewport>): ViewportController {
     return () => window.removeEventListener('pointerdown', cancelAnim, true)
   }, [cancelAnim])
 
-  /** Zoom by `factor`, keeping the world point under (cx, cy) fixed on screen. */
-  const zoomAt = useCallback((cx: number, cy: number, factor: number) => {
-    setViewport((v) => {
-      const scale = clamp(v.scale * factor, MIN_SCALE, MAX_SCALE)
-      if (scale === v.scale) return v
-      const worldX = (cx - v.x) / v.scale
-      const worldY = (cy - v.y) / v.scale
-      return { scale, x: cx - worldX * scale, y: cy - worldY * scale }
-    })
-  }, [])
-
-  // Native wheel listener so we can preventDefault (React's onWheel is passive).
+  // Wheel / trackpad: applied directly, no lerp.
+  //
+  // Trackpads already send smooth, high-frequency deltas — adding a lerp on top
+  // just introduces lag that makes pinch-zoom and two-finger pan feel disconnected.
+  // Programmatic transitions (button zoom, fit-all, focus) use `animateTo` for easing.
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -156,19 +120,34 @@ export function useViewport(initial?: Partial<Viewport>): ViewportController {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       cancelAnim()
-      const rect = el.getBoundingClientRect()
-      const cx = e.clientX - rect.left
-      const cy = e.clientY - rect.top
+
       if (e.ctrlKey || e.metaKey) {
-        zoomAt(cx, cy, Math.exp(-e.deltaY * ZOOM_SENSITIVITY))
+        const rect = el.getBoundingClientRect()
+        const cx = e.clientX - rect.left
+        const cy = e.clientY - rect.top
+        const factor = Math.exp(-e.deltaY * ZOOM_SENSITIVITY)
+        setViewport((v) => {
+          const newScale = clamp(v.scale * factor, MIN_SCALE, MAX_SCALE)
+          const worldX = (cx - v.x) / v.scale
+          const worldY = (cy - v.y) / v.scale
+          return {
+            scale: newScale,
+            x: cx - worldX * newScale,
+            y: cy - worldY * newScale,
+          }
+        })
       } else {
-        setViewport((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }))
+        setViewport((v) => ({
+          ...v,
+          x: v.x - e.deltaX,
+          y: v.y - e.deltaY,
+        }))
       }
     }
 
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [zoomAt, cancelAnim])
+  }, [cancelAnim])
 
   // Drag-to-pan. Move/up are tracked on `window` rather than via pointer
   // capture so the very first drag after a zoom (or any re-render) is picked up
@@ -210,15 +189,44 @@ export function useViewport(initial?: Partial<Viewport>): ViewportController {
 
   const reset = useCallback(() => setViewport({ x: 0, y: 0, scale: 1 }), [])
 
-  const zoomBy = useCallback(
-    (factor: number) => {
+  const jumpTo = useCallback(
+    (target: Partial<Viewport>) => {
+      cancelAnim()
+      setViewport((v) => ({ ...v, ...target }))
+    },
+    [cancelAnim],
+  )
+
+  /**
+   * Ease to `scale`, holding the viewport centre fixed.
+   *
+   * The world point under the centre of the screen has to stay under the centre of
+   * the screen, otherwise a zoom step also slides the plane sideways and you lose
+   * track of where you were.
+   */
+  const zoomToScale = useCallback(
+    (nextScale: number, duration = 260) => {
       const el = ref.current
       if (!el) return
-      const rect = el.getBoundingClientRect()
-      zoomAt(rect.width / 2, rect.height / 2, factor)
+      const v = vpRef.current
+      const scale = clamp(nextScale, MIN_SCALE, MAX_SCALE)
+      if (scale === v.scale) return
+      if (el.clientWidth === 0 || el.clientHeight === 0) return
+      const cx = el.clientWidth / 2
+      const cy = el.clientHeight / 2
+      const worldX = (cx - v.x) / v.scale
+      const worldY = (cy - v.y) / v.scale
+      animateTo({ scale, x: cx - worldX * scale, y: cy - worldY * scale }, duration)
     },
-    [zoomAt],
+    [animateTo],
   )
+
+  const zoomBy = useCallback(
+    (factor: number) => zoomToScale(vpRef.current.scale * factor),
+    [zoomToScale],
+  )
+
+  const zoomTo = useCallback((scale: number) => zoomToScale(scale), [zoomToScale])
 
   return {
     viewport,
@@ -229,6 +237,8 @@ export function useViewport(initial?: Partial<Viewport>): ViewportController {
     },
     reset,
     zoomBy,
+    zoomTo,
     animateTo,
+    jumpTo,
   }
 }

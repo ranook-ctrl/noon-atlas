@@ -1,14 +1,9 @@
-import { Row } from '../components/Row'
-
 type Stat = { label: string; value: string }
 
 type StatsBarProps = {
   title?: string
-  /** first group — green markers */
   primary?: Stat[]
-  /** second group — orange markers */
   secondary?: Stat[]
-  /** roll the values (slot-machine) when they change */
   animate?: boolean
 }
 
@@ -23,22 +18,34 @@ const DEFAULT_PRIMARY: Stat[] = [
 const DEFAULT_SECONDARY: Stat[] = [
   { label: 'GP of Widget', value: '0.67' },
   { label: 'Conversion Rate', value: '0.89%' },
-  { label: 'atc_gmv_per_user', value: '375.53 ' },
-  { label: 'atc_gmv_per_day', value: '1,948,837' },
-  { label: 'Monetisation_per_day', value: '380,000' },
+  { label: 'ATC GMV / user', value: '375.53' },
+  { label: 'ATC GMV / day', value: '1,948,837' },
+  { label: 'Monetisation / day', value: '380,000' },
 ]
 
-/**
- * Figma: Stat's bar (node 25:22918).
- * Card: white/4% fill, 1px white/8% border, backdrop blur(60px), radius 16, padding 20, gap 20.
- * Title (Geist Pixel "Square" 24) + two groups of Row atoms (green then orange markers).
- * Two 1×24 pink (#F7306F) accent ticks flank the title at the card's left/right edges.
- */
+function StatRow({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 24 }}>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ width: 8, height: 8, background: color, flex: '0 0 auto' }} />
+        <span
+          className="pixel-line"
+          style={{ width: 160, fontSize: 14, lineHeight: 'normal', color: 'rgba(255, 255, 255, 0.64)' }}
+        >
+          {label}
+        </span>
+      </div>
+      <span className="pixel" style={{ fontSize: 14, lineHeight: 1, color: '#FFFFFF' }}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
 export function StatsBar({
   title = 'Homepage Banner',
   primary = DEFAULT_PRIMARY,
   secondary = DEFAULT_SECONDARY,
-  animate = false,
 }: StatsBarProps) {
   const tick = {
     position: 'absolute' as const,
@@ -67,7 +74,6 @@ export function StatsBar({
         WebkitBackdropFilter: 'blur(60px)',
       }}
     >
-      {/* pink accent ticks at the card edges, aligned with the title */}
       <span style={{ ...tick, left: 0 }} />
       <span style={{ ...tick, right: 0 }} />
 
@@ -80,15 +86,17 @@ export function StatsBar({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {primary.map((s, i) => (
-          <Row key={`p-${i}`} label={s.label} value={s.value} markerColor={GREEN} fill animateValue={animate} />
+          <StatRow key={`p-${i}`} label={s.label} value={s.value} color={GREEN} />
         ))}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {secondary.map((s, i) => (
-          <Row key={`s-${i}`} label={s.label} value={s.value} markerColor={ORANGE} fill animateValue={animate} />
-        ))}
-      </div>
+      {secondary.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {secondary.map((s, i) => (
+            <StatRow key={`s-${i}`} label={s.label} value={s.value} color={ORANGE} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
