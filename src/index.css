@@ -260,11 +260,18 @@ body {
   overflow: hidden;
 }
 
-/* A clearly-bounded card, not a faint tint. The translucent tool fill is almost
-   invisible over the near-black canvas at this size, so the panel read as loose floating
-   elements; a stronger fill + shadow makes it a distinct surface. */
+/* A clearly-bounded card, not a faint tint — but bounded by its border and shadow, NOT by
+   an opaque fill.
+
+   This rule used to also set `background: rgba(16, 16, 20, 0.92)`. That was written while
+   the panel's `backdrop-filter` was dead (see the backdrop-root notes above — the same
+   symptom was chased three times), so the surface really did read as a loose floating
+   tint and a near-solid fill was the only thing that made it cohere. Now that the blur
+   actually renders, 92% opacity leaves nothing for it to blur: the panel went back to
+   looking like flat dark plastic, which is exactly the complaint the fill was added to
+   solve. The border and shadow below do that job without smothering the glass, so the
+   fill falls through to `--tool-fill` like every other tool surface. */
 .tool-surface.rightnav {
-  background: rgba(16, 16, 20, 0.92);
   border-color: rgba(255, 255, 255, 0.12);
   border-radius: 16px;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
